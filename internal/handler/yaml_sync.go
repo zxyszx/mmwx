@@ -1,0 +1,1268 @@
+package handler
+
+import (
+	"encoding/json"
+	"fmt"
+	"miaomiaowu/internal/logger"
+	"os"
+	"path/filepath"
+
+	"miaomiaowu/internal/util"
+
+	"gopkg.in/yaml.v3"
+)
+
+// proxyKeysChanged checks if the key set of the existing proxy node differs from the new config
+func proxyKeysChanged(proxyNode *yaml.Node, newConfig map[string]any) bool {
+	if proxyNode == nil || proxyNode.Kind != yaml.MappingNode {
+		return true
+	}
+	existingKeys := make(map[string]struct{})
+	for i := 0; i < len(proxyNode.Content); i += 2 {
+		if i+1 < len(proxyNode.Content) {
+			existingKeys[proxyNode.Content[i].Value] = struct{}{}
+		}
+	}
+	if len(existingKeys) != len(newConfig) {
+		return true
+	}
+	for key := range newConfig {
+		if _, ok := existingKeys[key]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// updateProxyNodeFields updates an existing proxy node with new field values while preserving original node styles
+func updateProxyNodeFields(proxyNode *yaml.Node, newConfig map[string]any) {
+	if proxyNode == nil || proxyNode.Kind != yaml.MappingNode {
+		return
+	}
+
+	// Build a map of existing field key nodes
+	existingFields := make(map[string]*yaml.Node) // fieldName -> valueNode
+	for i := 0; i < len(proxyNode.Content); i += 2 {
+		if i+1 >= len(proxyNode.Content) {
+			break
+		}
+		keyNode := proxyNode.Content[i]
+		valueNode := proxyNode.Content[i+1]
+		existingFields[keyNode.Value] = valueNode
+	}
+
+	// Update existing value nodes with new values, preserving their style
+	for key, newValue := range newConfig {
+		if valueNode, exists := existingFields[key]; exists {
+			// Update the existing value node's value, preserving its Kind and Style
+			updateValueNode(valueNode, newValue)
+		}
+	}
+}
+
+// reorderProxyNodeFieldsInPlace reorders fields in a proxy node in-place
+func reorderProxyNodeFieldsInPlace(proxyNode *yaml.Node) {
+	if proxyNode == nil || proxyNode.Kind != yaml.MappingNode {
+		return
+	}
+	reordered := util.ReorderProxyNode(proxyNode)
+	proxyNode.Content = reordered.Content
+}
+
+// updateValueNode updates a yaml.Node's value while trying to preserve its original type/style
+func updateValueNode(node *yaml.Node, newValue any) {
+	if node == nil {
+		return
+	}
+
+	switch v := newValue.(type) {
+	case string:
+		// Preserve the node's kind and tag if it's already a scalar
+		if node.Kind == yaml.ScalarNode {
+			node.Value = v
+			// Clear !!str tag if the value looks like a number, to prevent quoting
+			// Only keep !!str tag for empty strings
+			if v != "" && node.Tag == "!!str" {
+				node.Tag = ""
+			}
+		} else {
+			node.Kind = yaml.ScalarNode
+			node.Value = v
+		}
+	case int:
+		if node.Kind == yaml.ScalarNode {
+			node.SetString(fmt.Sprintf("%d", v))
+		} else {
+			node.Kind = yaml.ScalarNode
+			node.SetString(fmt.Sprintf("%d", v))
+		}
+	case int64:
+		if node.Kind == yaml.ScalarNode {
+			node.SetString(fmt.Sprintf("%d", v))
+		} else {
+			node.Kind = yaml.ScalarNode
+			node.SetString(fmt.Sprintf("%d", v))
+		}
+	case float64:
+		if node.Kind == yaml.ScalarNode {
+			node.SetString(fmt.Sprintf("%v", v))
+		} else {
+			node.Kind = yaml.ScalarNode
+			node.SetString(fmt.Sprintf("%v", v))
+		}
+	case bool:
+		if node.Kind == yaml.ScalarNode {
+			if v {
+				node.Value = "true"
+			} else {
+				node.Value = "false"
+			}
+		} else {
+			node.Kind = yaml.ScalarNode
+			if v {
+				node.Value = "true"
+			} else {
+				node.Value = "false"
+			}
+		}
+	case map[string]any:
+		// For nested objects, recursively update
+		if node.Kind == yaml.MappingNode {
+			updateProxyNodeFields(node, v)
+		}
+		// Otherwise, we'd need to rebuild the entire structure
+	case []any:
+		// For arrays, we need to rebuild
+		if node.Kind != yaml.SequenceNode {
+			node.Kind = yaml.SequenceNode
+			node.Content = nil
+		}
+		// Clear and rebuild content
+		node.Content = nil
+		for _, item := range v {
+			node.Content = append(node.Content, encodeValue(item))
+		}
+	}
+}
+
+// encodeValue converts a Go value to a yaml.Node
+func encodeValue(value any) *yaml.Node {
+	node := &yaml.Node{}
+
+	// 处理历史BUG把short-id: "" 保存成short-id: null, 导致short-id输出为 <nil>
+	if value == nil {
+		node.Kind = yaml.ScalarNode
+		node.Tag = "!!str"
+		node.Value = ""
+		node.Style = yaml.DoubleQuotedStyle // 强制空字符串使用双引号
+		return node
+	}
+
+	switch v := value.(type) {
+	case string:
+		node.Kind = yaml.ScalarNode
+		// 仅对空值设置!!str标签, 防止给数值类型加上双引号
+		if v == "" {
+			node.Tag = "!!str"
+			node.Style = yaml.DoubleQuotedStyle // 强制空字符串使用双引号
+		}
+		node.Value = v
+	case int:
+		node.Kind = yaml.ScalarNode
+		node.SetString(fmt.Sprintf("%d", v))
+	case int64:
+		node.Kind = yaml.ScalarNode
+		node.SetString(fmt.Sprintf("%d", v))
+	case float64:
+		node.Kind = yaml.ScalarNode
+		node.SetString(fmt.Sprintf("%v", v))
+	case bool:
+		node.Kind = yaml.ScalarNode
+		if v {
+			node.Value = "true"
+		} else {
+			node.Value = "false"
+		}
+	case []any:
+		node.Kind = yaml.SequenceNode
+		for _, item := range v {
+			node.Content = append(node.Content, encodeValue(item))
+		}
+	case map[string]any:
+		node.Kind = yaml.MappingNode
+		for k, val := range v {
+			keyNode := &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Value: k,
+			}
+			node.Content = append(node.Content, keyNode)
+
+			// 特殊处理 short-id 字段，始终当作字符串处理并加引号
+			if k == "short-id" {
+				strVal := ""
+				switch typedVal := val.(type) {
+				case string:
+					strVal = typedVal
+				case int:
+					// 数字类型转为字符串，保持原值
+					strVal = fmt.Sprintf("%d", typedVal)
+				case int64:
+					strVal = fmt.Sprintf("%d", typedVal)
+				case float64:
+					// 浮点数转为字符串，保持原值
+					if typedVal == float64(int64(typedVal)) {
+						strVal = fmt.Sprintf("%d", int64(typedVal))
+					} else {
+						strVal = fmt.Sprintf("%g", typedVal)
+					}
+				case nil:
+					strVal = ""
+				default:
+					strVal = fmt.Sprintf("%v", typedVal)
+				}
+
+				// 创建带引号的字符串节点，强制使用 !!str 标签和双引号
+				valueNode := &yaml.Node{
+					Kind:  yaml.ScalarNode,
+					Tag:   "!!str",
+					Value: strVal,
+					Style: yaml.DoubleQuotedStyle,
+				}
+				node.Content = append(node.Content, valueNode)
+			} else {
+				node.Content = append(node.Content, encodeValue(val))
+			}
+		}
+	default:
+		// Fallback: encode as string
+		node.Kind = yaml.ScalarNode
+		node.SetString(fmt.Sprintf("%v", v))
+	}
+
+	return node
+}
+
+// MarshalYAMLWithQuotedEmptyStrings marshals a map to YAML ensuring empty strings are quoted
+func MarshalYAMLWithQuotedEmptyStrings(data map[string]any) ([]byte, error) {
+	// Convert nil values to empty strings first
+	normalizeProxyFields(data)
+
+	// Build the root YAML node using our custom encodeValue
+	rootNode := encodeValue(data)
+
+	// Create a YAML document
+	doc := &yaml.Node{
+		Kind:    yaml.DocumentNode,
+		Content: []*yaml.Node{rootNode},
+	}
+
+	// Marshal to bytes
+	return yaml.Marshal(doc)
+}
+
+// fixShortIdStyleInNode recursively fixes short-id fields to use double quotes
+func fixShortIdStyleInNode(node *yaml.Node) {
+	if node == nil {
+		return
+	}
+
+	// Process mapping nodes (objects)
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i < len(node.Content); i += 2 {
+			if i+1 < len(node.Content) {
+				keyNode := node.Content[i]
+				valueNode := node.Content[i+1]
+
+				// If this is a short-id field, ensure the value uses double quotes
+				if keyNode.Value == "short-id" {
+					if valueNode.Kind == yaml.ScalarNode {
+						valueNode.Tag = "!!str"
+						valueNode.Style = yaml.DoubleQuotedStyle
+						// Ensure the value is a string
+						if valueNode.Value == "" || valueNode.Value == "null" {
+							valueNode.Value = ""
+						}
+					}
+				}
+
+				// Recursively process the value node
+				fixShortIdStyleInNode(valueNode)
+			}
+		}
+	}
+
+	// Process sequence nodes (arrays)
+	if node.Kind == yaml.SequenceNode {
+		for _, child := range node.Content {
+			fixShortIdStyleInNode(child)
+		}
+	}
+
+	// Process document nodes
+	if node.Kind == yaml.DocumentNode {
+		for _, child := range node.Content {
+			fixShortIdStyleInNode(child)
+		}
+	}
+}
+
+// syncNodeToYAMLFiles updates node information in all YAML subscription files
+func syncNodeToYAMLFiles(subscribeDir, oldNodeName, newNodeName string, clashConfigJSON string) error {
+	if subscribeDir == "" {
+		return fmt.Errorf("subscribe directory is empty")
+	}
+
+	// Parse the new clash config
+	var newClashConfig map[string]any
+	if err := json.Unmarshal([]byte(clashConfigJSON), &newClashConfig); err != nil {
+		return fmt.Errorf("parse new clash config: %w", err)
+	}
+
+	// Convert nil values to empty strings (e.g., for short-id field)
+	normalizeProxyFields(newClashConfig)
+
+	// Get all YAML files in subscribes directory
+	entries, err := os.ReadDir(subscribeDir)
+	if err != nil {
+		return fmt.Errorf("read subscribe directory: %w", err)
+	}
+
+	// Process each YAML file
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		filename := entry.Name()
+		// Skip non-YAML files and the .keep.yaml placeholder
+		if filepath.Ext(filename) != ".yaml" && filepath.Ext(filename) != ".yml" {
+			continue
+		}
+		if filename == ".keep.yaml" {
+			continue
+		}
+
+		filePath := filepath.Join(subscribeDir, filename)
+
+		// Read YAML file
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue // Skip files we can't read
+		}
+
+		// Parse YAML
+		var yamlContent map[string]any
+		if err := yaml.Unmarshal(data, &yamlContent); err != nil {
+			continue // Skip invalid YAML files
+		}
+
+		// Check if file has proxies field
+		proxies, ok := yamlContent["proxies"].([]any)
+		if !ok || len(proxies) == 0 {
+			continue
+		}
+
+		modified := false
+		nameChanged := oldNodeName != newNodeName
+
+		// Update or remove matching nodes
+		newProxies := make([]any, 0, len(proxies))
+		for _, proxy := range proxies {
+			proxyMap, ok := proxy.(map[string]any)
+			if !ok {
+				newProxies = append(newProxies, proxy)
+				continue
+			}
+
+			proxyName, ok := proxyMap["name"].(string)
+			if !ok {
+				newProxies = append(newProxies, proxy)
+				continue
+			}
+
+			// If name matches old name
+			if proxyName == oldNodeName {
+				if nameChanged {
+					// Name changed: replace with new config at current position
+					newProxies = append(newProxies, newClashConfig)
+					modified = true
+				} else {
+					// Name unchanged: update node config in place
+					for key, value := range newClashConfig {
+						proxyMap[key] = value
+					}
+					newProxies = append(newProxies, proxyMap)
+					modified = true
+				}
+			} else {
+				newProxies = append(newProxies, proxyMap)
+			}
+		}
+
+		// If nothing changed, skip this file
+		if !modified {
+			continue
+		}
+
+		// Update proxies in YAML content with ordered fields
+		orderedProxiesForMap := make([]any, 0, len(newProxies))
+		for _, proxy := range newProxies {
+			orderedProxiesForMap = append(orderedProxiesForMap, proxy)
+		}
+		yamlContent["proxies"] = orderedProxiesForMap
+
+		// Also update proxy-groups if they reference the old name
+		if proxyGroups, ok := yamlContent["proxy-groups"].([]any); ok {
+			for _, group := range proxyGroups {
+				groupMap, ok := group.(map[string]any)
+				if !ok {
+					continue
+				}
+
+				// Update proxies list in group
+				if groupProxies, ok := groupMap["proxies"].([]any); ok {
+					updatedGroupProxies := make([]any, 0, len(groupProxies))
+					for _, groupProxy := range groupProxies {
+						proxyName, ok := groupProxy.(string)
+						if !ok {
+							updatedGroupProxies = append(updatedGroupProxies, groupProxy)
+							continue
+						}
+
+						if proxyName == oldNodeName && nameChanged {
+							// Replace old name with new name
+							updatedGroupProxies = append(updatedGroupProxies, newNodeName)
+						} else {
+							updatedGroupProxies = append(updatedGroupProxies, groupProxy)
+						}
+					}
+					groupMap["proxies"] = updatedGroupProxies
+				}
+			}
+		}
+
+		// Also update rules if they reference the old name
+		if rules, ok := yamlContent["rules"].([]any); ok {
+			updatedRules := make([]any, 0, len(rules))
+			for _, rule := range rules {
+				ruleStr, ok := rule.(string)
+				if !ok {
+					updatedRules = append(updatedRules, rule)
+					continue
+				}
+
+				// Check if rule references the old node name
+				if nameChanged && containsNodeName(ruleStr, oldNodeName) {
+					// Replace old name with new name in rule
+					updatedRules = append(updatedRules, replaceNodeNameInRule(ruleStr, oldNodeName, newNodeName))
+				} else {
+					updatedRules = append(updatedRules, rule)
+				}
+			}
+			yamlContent["rules"] = updatedRules
+		}
+
+		// Re-read the file as yaml.Node to preserve structure
+		var rootNode yaml.Node
+		if err := yaml.Unmarshal(data, &rootNode); err != nil {
+			continue
+		}
+
+		// Find and update the proxies section, preserving original node styles
+		if rootNode.Kind == yaml.DocumentNode && len(rootNode.Content) > 0 {
+			docNode := rootNode.Content[0]
+			if docNode.Kind == yaml.MappingNode {
+				// Find the proxies key
+				for i := 0; i < len(docNode.Content); i += 2 {
+					if i+1 >= len(docNode.Content) {
+						break
+					}
+					keyNode := docNode.Content[i]
+					if keyNode.Value == "proxies" {
+						proxiesNode := docNode.Content[i+1]
+						if proxiesNode.Kind == yaml.SequenceNode {
+							// Update proxies in-place to preserve node styles
+							for j, proxyNode := range proxiesNode.Content {
+								if proxyNode.Kind != yaml.MappingNode {
+									continue
+								}
+
+								// Find the name field in this proxy node
+								var proxyName string
+								for k := 0; k < len(proxyNode.Content); k += 2 {
+									if k+1 >= len(proxyNode.Content) {
+										break
+									}
+									if proxyNode.Content[k].Value == "name" {
+										proxyName = proxyNode.Content[k+1].Value
+										break
+									}
+								}
+
+								// If this proxy matches the one being updated
+								if proxyName == oldNodeName {
+									if nameChanged || proxyKeysChanged(proxyNode, newClashConfig) {
+										// Replace entire proxy node with new config
+										proxiesNode.Content[j] = util.ReorderProxyFieldsToNode(newClashConfig)
+									} else {
+										// Update fields in-place, preserving original node styles
+										updateProxyNodeFields(proxyNode, newClashConfig)
+										// Reorder fields to put priority fields first
+										reorderProxyNodeFieldsInPlace(proxyNode)
+									}
+								}
+							}
+						}
+						break
+					}
+				}
+
+				// Update proxy-groups if name changed
+				if nameChanged {
+					for i := 0; i < len(docNode.Content); i += 2 {
+						if i+1 >= len(docNode.Content) {
+							break
+						}
+						keyNode := docNode.Content[i]
+						if keyNode.Value == "proxy-groups" {
+							updateProxyGroupsNode(docNode.Content[i+1], oldNodeName, newNodeName)
+							break
+						}
+					}
+
+					// Update rules if name changed
+					for i := 0; i < len(docNode.Content); i += 2 {
+						if i+1 >= len(docNode.Content) {
+							break
+						}
+						keyNode := docNode.Content[i]
+						if keyNode.Value == "rules" {
+							updateRulesNode(docNode.Content[i+1], oldNodeName, newNodeName)
+							break
+						}
+					}
+				}
+
+				// Reorder proxy-groups fields
+				for i := 0; i < len(docNode.Content); i += 2 {
+					if i+1 >= len(docNode.Content) {
+						break
+					}
+					if docNode.Content[i].Value == "proxy-groups" {
+						proxyGroupsNode := docNode.Content[i+1]
+						if proxyGroupsNode.Kind == yaml.SequenceNode {
+							// Reorder fields in each proxy group
+							for _, groupNode := range proxyGroupsNode.Content {
+								if groupNode.Kind == yaml.MappingNode {
+									reorderProxyGroupFields(groupNode)
+								}
+							}
+						}
+						break
+					}
+				}
+
+				// Reorder top-level fields to put dns, proxies, proxy-groups before rule-providers
+				reorderTopLevelFields(docNode)
+			}
+		}
+
+		// Fix short-id fields to use double quotes before marshaling
+		fixShortIdStyleInNode(&rootNode)
+
+		// Encode to YAML using yaml.Marshal on the node (使用2空格缩进)
+		output, err := MarshalYAMLWithIndent(&rootNode)
+		if err != nil {
+			continue // Skip files we can't marshal
+		}
+
+		// Fix emoji escapes and quoted numbers
+		fixed := RemoveUnicodeEscapeQuotes(string(output))
+
+		if err := os.WriteFile(filePath, []byte(fixed), 0644); err != nil {
+			continue // Skip files we can't write
+		}
+	}
+
+	return nil
+}
+
+// 批量同步多个节点更新到 YAML 文件，只读写每个文件一次，避免大量节点时耗时特别高
+func batchSyncNodesToYAMLFiles(subscribeDir string, updates []NodeUpdate) error {
+	if subscribeDir == "" || len(updates) == 0 {
+		return nil
+	}
+
+	// 预解析所有更新的 clash config
+	type parsedUpdate struct {
+		oldName     string
+		newName     string
+		clashConfig map[string]any
+	}
+	parsedUpdates := make([]parsedUpdate, 0, len(updates))
+	for _, update := range updates {
+		var clashConfig map[string]any
+		if err := json.Unmarshal([]byte(update.ClashConfigJSON), &clashConfig); err != nil {
+			continue // 跳过无法解析的
+		}
+		normalizeProxyFields(clashConfig)
+		parsedUpdates = append(parsedUpdates, parsedUpdate{
+			oldName:     update.OldName,
+			newName:     update.NewName,
+			clashConfig: clashConfig,
+		})
+	}
+
+	if len(parsedUpdates) == 0 {
+		return nil
+	}
+
+	// 构建旧名称到更新的映射，方便快速查找
+	updateMap := make(map[string]parsedUpdate)
+	for _, u := range parsedUpdates {
+		updateMap[u.oldName] = u
+	}
+
+	// 获取所有 YAML 文件
+	entries, err := os.ReadDir(subscribeDir)
+	if err != nil {
+		return fmt.Errorf("read subscribe directory: %w", err)
+	}
+
+	// 处理每个 YAML 文件
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		filename := entry.Name()
+		if filepath.Ext(filename) != ".yaml" && filepath.Ext(filename) != ".yml" {
+			continue
+		}
+		if filename == ".keep.yaml" {
+			continue
+		}
+
+		filePath := filepath.Join(subscribeDir, filename)
+
+		// 读取 YAML 文件
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		// 解析为 yaml.Node 以保留格式
+		var rootNode yaml.Node
+		if err := yaml.Unmarshal(data, &rootNode); err != nil {
+			continue
+		}
+
+		modified := false
+
+		// 找到 proxies 部分并更新
+		if rootNode.Kind == yaml.DocumentNode && len(rootNode.Content) > 0 {
+			docNode := rootNode.Content[0]
+			if docNode.Kind == yaml.MappingNode {
+				// 找到 proxies key
+				for i := 0; i < len(docNode.Content); i += 2 {
+					if i+1 >= len(docNode.Content) {
+						break
+					}
+					keyNode := docNode.Content[i]
+					if keyNode.Value == "proxies" {
+						proxiesNode := docNode.Content[i+1]
+						if proxiesNode.Kind == yaml.SequenceNode {
+							// 遍历每个 proxy 节点
+							for j, proxyNode := range proxiesNode.Content {
+								if proxyNode.Kind != yaml.MappingNode {
+									continue
+								}
+
+								// 找到 name 字段
+								var proxyName string
+								for k := 0; k < len(proxyNode.Content); k += 2 {
+									if k+1 >= len(proxyNode.Content) {
+										break
+									}
+									if proxyNode.Content[k].Value == "name" {
+										proxyName = proxyNode.Content[k+1].Value
+										break
+									}
+								}
+
+								// 检查是否需要更新此节点
+								if update, exists := updateMap[proxyName]; exists {
+									nameChanged := update.oldName != update.newName
+									if nameChanged || proxyKeysChanged(proxyNode, update.clashConfig) {
+										// 名称改变或属性增删：替换整个节点
+										proxiesNode.Content[j] = util.ReorderProxyFieldsToNode(update.clashConfig)
+									} else {
+										// 仅值变化：就地更新字段
+										updateProxyNodeFields(proxyNode, update.clashConfig)
+										reorderProxyNodeFieldsInPlace(proxyNode)
+									}
+									modified = true
+								}
+							}
+						}
+						break
+					}
+				}
+
+				// 更新 proxy-groups 中的名称引用
+				for _, update := range parsedUpdates {
+					if update.oldName != update.newName {
+						for i := 0; i < len(docNode.Content); i += 2 {
+							if i+1 >= len(docNode.Content) {
+								break
+							}
+							if docNode.Content[i].Value == "proxy-groups" {
+								updateProxyGroupsNode(docNode.Content[i+1], update.oldName, update.newName)
+								modified = true
+								break
+							}
+						}
+
+						// 更新 rules 中的名称引用
+						for i := 0; i < len(docNode.Content); i += 2 {
+							if i+1 >= len(docNode.Content) {
+								break
+							}
+							if docNode.Content[i].Value == "rules" {
+								updateRulesNode(docNode.Content[i+1], update.oldName, update.newName)
+								modified = true
+								break
+							}
+						}
+					}
+				}
+
+				// 重排序 proxy-groups 字段
+				for i := 0; i < len(docNode.Content); i += 2 {
+					if i+1 >= len(docNode.Content) {
+						break
+					}
+					if docNode.Content[i].Value == "proxy-groups" {
+						proxyGroupsNode := docNode.Content[i+1]
+						if proxyGroupsNode.Kind == yaml.SequenceNode {
+							for _, groupNode := range proxyGroupsNode.Content {
+								if groupNode.Kind == yaml.MappingNode {
+									reorderProxyGroupFields(groupNode)
+								}
+							}
+						}
+						break
+					}
+				}
+
+				// 重排序顶层字段
+				reorderTopLevelFields(docNode)
+			}
+		}
+
+		// 如果没有修改，跳过此文件
+		if !modified {
+			continue
+		}
+
+		// 修复 short-id 字段样式
+		fixShortIdStyleInNode(&rootNode)
+
+		// 编码为 YAML
+		output, err := MarshalYAMLWithIndent(&rootNode)
+		if err != nil {
+			continue
+		}
+
+		// 修复 emoji 转义和引号数字
+		fixed := RemoveUnicodeEscapeQuotes(string(output))
+
+		if err := os.WriteFile(filePath, []byte(fixed), 0644); err != nil {
+			continue
+		}
+
+		logger.Info("[YAML同步] 批量更新文件", "filename", filename)
+	}
+
+	return nil
+}
+
+// updateProxyGroupsNode updates proxy-groups node to replace old node name with new name
+func updateProxyGroupsNode(groupsNode *yaml.Node, oldName, newName string) {
+	if groupsNode.Kind != yaml.SequenceNode {
+		return
+	}
+
+	for _, groupNode := range groupsNode.Content {
+		if groupNode.Kind != yaml.MappingNode {
+			continue
+		}
+
+		// Find the "proxies" key in this group
+		for i := 0; i < len(groupNode.Content); i += 2 {
+			if i+1 >= len(groupNode.Content) {
+				break
+			}
+			keyNode := groupNode.Content[i]
+			if keyNode.Value == "proxies" {
+				valueNode := groupNode.Content[i+1]
+				if valueNode.Kind == yaml.SequenceNode {
+					// Update proxy names in the sequence
+					for _, proxyNode := range valueNode.Content {
+						if proxyNode.Kind == yaml.ScalarNode && proxyNode.Value == oldName {
+							proxyNode.Value = newName
+						}
+					}
+				}
+				break
+			}
+		}
+	}
+}
+
+// updateRulesNode updates rules node to replace old node name with new name
+func updateRulesNode(rulesNode *yaml.Node, oldName, newName string) {
+	if rulesNode.Kind != yaml.SequenceNode {
+		return
+	}
+
+	for _, ruleNode := range rulesNode.Content {
+		if ruleNode.Kind == yaml.ScalarNode {
+			if containsNodeName(ruleNode.Value, oldName) {
+				ruleNode.Value = replaceNodeNameInRule(ruleNode.Value, oldName, newName)
+			}
+		}
+	}
+}
+
+// containsNodeName checks if a rule string references a node name
+func containsNodeName(rule, nodeName string) bool {
+	// Rules format: TYPE,PARAM,NODE_NAME
+	// Example: DOMAIN-SUFFIX,google.com,节点名称
+	parts := splitRule(rule)
+	if len(parts) >= 3 {
+		return parts[len(parts)-1] == nodeName
+	}
+	return false
+}
+
+// replaceNodeNameInRule replaces node name in a rule string
+func replaceNodeNameInRule(rule, oldName, newName string) string {
+	parts := splitRule(rule)
+	if len(parts) >= 3 && parts[len(parts)-1] == oldName {
+		parts[len(parts)-1] = newName
+		result := ""
+		for i, part := range parts {
+			if i > 0 {
+				result += ","
+			}
+			result += part
+		}
+		return result
+	}
+	return rule
+}
+
+// splitRule splits a rule string by comma, handling escaped commas
+func splitRule(rule string) []string {
+	var parts []string
+	var current string
+	escaped := false
+
+	for _, ch := range rule {
+		if escaped {
+			current += string(ch)
+			escaped = false
+			continue
+		}
+
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+
+		if ch == ',' {
+			parts = append(parts, current)
+			current = ""
+			continue
+		}
+
+		current += string(ch)
+	}
+
+	if current != "" {
+		parts = append(parts, current)
+	}
+
+	return parts
+}
+
+// reorderTopLevelFields reorders the top-level YAML fields to put important sections first
+func reorderTopLevelFields(docNode *yaml.Node) {
+	if docNode.Kind != yaml.MappingNode {
+		return
+	}
+
+	// Define field pair structure
+	type fieldPair struct {
+		key   *yaml.Node
+		value *yaml.Node
+	}
+
+	// yaml属性指定排序
+	priorityFields := []string{
+		"port",
+		"socks-port",
+		"allow-lan",
+		"mode",
+		"log-level",
+		"dns",
+		"proxies",
+		"proxy-groups",
+		"rules",
+		"rule-providers",
+		"geodata-mode",
+		"geo-auto-update",
+		"geodata-loader",
+		"geo-update-interval",
+		"geox-url",
+	}
+
+	// Create a map to store all key-value pairs
+	fieldMap := make(map[string]*fieldPair)
+	var otherFields []*fieldPair
+
+	// Extract all fields
+	for i := 0; i < len(docNode.Content); i += 2 {
+		if i+1 >= len(docNode.Content) {
+			break
+		}
+		keyNode := docNode.Content[i]
+		valueNode := docNode.Content[i+1]
+
+		pair := &fieldPair{key: keyNode, value: valueNode}
+
+		// Check if this is a priority field
+		isPriority := false
+		for _, pf := range priorityFields {
+			if keyNode.Value == pf {
+				fieldMap[pf] = pair
+				isPriority = true
+				break
+			}
+		}
+
+		if !isPriority {
+			otherFields = append(otherFields, pair)
+		}
+	}
+
+	// Rebuild Content with priority fields first
+	newContent := make([]*yaml.Node, 0, len(docNode.Content))
+
+	// Add priority fields in order
+	for _, fieldName := range priorityFields {
+		if pair, ok := fieldMap[fieldName]; ok {
+			newContent = append(newContent, pair.key, pair.value)
+		}
+	}
+
+	// Add remaining fields in their original order
+	for _, pair := range otherFields {
+		newContent = append(newContent, pair.key, pair.value)
+	}
+
+	// Replace the content
+	docNode.Content = newContent
+}
+
+// deleteNodeFromYAMLFilesWithLog removes node from all YAML subscription files and returns affected files
+func deleteNodeFromYAMLFilesWithLog(subscribeDir, nodeName string) ([]string, error) {
+	affectedFiles := []string{}
+	if subscribeDir == "" {
+		return affectedFiles, fmt.Errorf("subscribe directory is empty")
+	}
+
+	// Get all YAML files in subscribes directory
+	entries, err := os.ReadDir(subscribeDir)
+	if err != nil {
+		return affectedFiles, fmt.Errorf("read subscribe directory: %w", err)
+	}
+
+	// Process each YAML file
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		filename := entry.Name()
+		// Skip non-YAML files and the .keep.yaml placeholder
+		if filepath.Ext(filename) != ".yaml" && filepath.Ext(filename) != ".yml" {
+			continue
+		}
+		if filename == ".keep.yaml" {
+			continue
+		}
+
+		filePath := filepath.Join(subscribeDir, filename)
+
+		// Read YAML file
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue // Skip files we can't read
+		}
+
+		// Parse YAML
+		var yamlContent map[string]any
+		if err := yaml.Unmarshal(data, &yamlContent); err != nil {
+			continue // Skip invalid YAML files
+		}
+
+		// Check if file has proxies field
+		proxies, ok := yamlContent["proxies"].([]any)
+		if !ok || len(proxies) == 0 {
+			continue
+		}
+
+		modified := false
+
+		// Remove matching nodes
+		newProxies := make([]any, 0, len(proxies))
+		for _, proxy := range proxies {
+			proxyMap, ok := proxy.(map[string]any)
+			if !ok {
+				newProxies = append(newProxies, proxy)
+				continue
+			}
+
+			proxyName, ok := proxyMap["name"].(string)
+			if !ok {
+				newProxies = append(newProxies, proxy)
+				continue
+			}
+
+			// If name matches, skip this proxy (delete it)
+			if proxyName == nodeName {
+				modified = true
+				continue
+			}
+
+			newProxies = append(newProxies, proxyMap)
+		}
+
+		// If nothing changed, skip this file
+		if !modified {
+			continue
+		}
+
+		// Mark this file as affected
+		affectedFiles = append(affectedFiles, filename)
+
+		// Update proxies in YAML content
+		yamlContent["proxies"] = newProxies
+
+		// Also remove from proxy-groups if they reference the node
+		if proxyGroups, ok := yamlContent["proxy-groups"].([]any); ok {
+			for _, group := range proxyGroups {
+				groupMap, ok := group.(map[string]any)
+				if !ok {
+					continue
+				}
+
+				// Remove from proxies list in group
+				if groupProxies, ok := groupMap["proxies"].([]any); ok {
+					updatedGroupProxies := make([]any, 0, len(groupProxies))
+					for _, groupProxy := range groupProxies {
+						proxyName, ok := groupProxy.(string)
+						if !ok {
+							updatedGroupProxies = append(updatedGroupProxies, groupProxy)
+							continue
+						}
+
+						// Skip if this is the node to delete
+						if proxyName != nodeName {
+							updatedGroupProxies = append(updatedGroupProxies, groupProxy)
+						}
+					}
+					groupMap["proxies"] = updatedGroupProxies
+				}
+			}
+		}
+
+		// Also remove from rules if they reference the node
+		if rules, ok := yamlContent["rules"].([]any); ok {
+			updatedRules := make([]any, 0, len(rules))
+			for _, rule := range rules {
+				ruleStr, ok := rule.(string)
+				if !ok {
+					updatedRules = append(updatedRules, rule)
+					continue
+				}
+
+				// Skip rules that reference this node
+				if !containsNodeName(ruleStr, nodeName) {
+					updatedRules = append(updatedRules, rule)
+				}
+			}
+			yamlContent["rules"] = updatedRules
+		}
+
+		// Re-read the file as yaml.Node to preserve structure
+		var rootNode yaml.Node
+		if err := yaml.Unmarshal(data, &rootNode); err != nil {
+			continue
+		}
+
+		// Find and update the sections
+		if rootNode.Kind == yaml.DocumentNode && len(rootNode.Content) > 0 {
+			docNode := rootNode.Content[0]
+			if docNode.Kind == yaml.MappingNode {
+				// Update proxies section - remove nodes with matching name
+				for i := 0; i < len(docNode.Content); i += 2 {
+					if i+1 >= len(docNode.Content) {
+						break
+					}
+					keyNode := docNode.Content[i]
+					if keyNode.Value == "proxies" {
+						proxiesNode := docNode.Content[i+1]
+						if proxiesNode.Kind == yaml.SequenceNode {
+							// Filter out proxies with matching name, preserving others
+							newContent := []*yaml.Node{}
+							for _, proxyNode := range proxiesNode.Content {
+								if proxyNode.Kind != yaml.MappingNode {
+									newContent = append(newContent, proxyNode)
+									continue
+								}
+
+								// Find the name field in this proxy node
+								var proxyName string
+								for k := 0; k < len(proxyNode.Content); k += 2 {
+									if k+1 >= len(proxyNode.Content) {
+										break
+									}
+									if proxyNode.Content[k].Value == "name" {
+										proxyName = proxyNode.Content[k+1].Value
+										break
+									}
+								}
+
+								// Keep proxy if name doesn't match
+								if proxyName != nodeName {
+									newContent = append(newContent, proxyNode)
+								}
+							}
+							proxiesNode.Content = newContent
+						}
+						break
+					}
+				}
+
+				// Update proxy-groups to remove node references
+				for i := 0; i < len(docNode.Content); i += 2 {
+					if i+1 >= len(docNode.Content) {
+						break
+					}
+					keyNode := docNode.Content[i]
+					if keyNode.Value == "proxy-groups" {
+						removeNodeFromProxyGroupsNode(docNode.Content[i+1], nodeName)
+						break
+					}
+				}
+
+				// Update rules to remove node references
+				for i := 0; i < len(docNode.Content); i += 2 {
+					if i+1 >= len(docNode.Content) {
+						break
+					}
+					keyNode := docNode.Content[i]
+					if keyNode.Value == "rules" {
+						removeNodeFromRulesNode(docNode.Content[i+1], nodeName)
+						break
+					}
+				}
+
+				// Reorder top-level fields
+				reorderTopLevelFields(docNode)
+			}
+		}
+
+		// Fix short-id fields to use double quotes before marshaling
+		fixShortIdStyleInNode(&rootNode)
+
+		// Encode to YAML (使用2空格缩进)
+		output, err := MarshalYAMLWithIndent(&rootNode)
+		if err != nil {
+			continue // Skip files we can't marshal
+		}
+
+		// Post-process to fix emoji and short-id formatting
+		result := RemoveUnicodeEscapeQuotes(string(output))
+
+		if err := os.WriteFile(filePath, []byte(result), 0644); err != nil {
+			continue // Skip files we can't write
+		}
+	}
+
+	return affectedFiles, nil
+}
+
+// deleteNodeFromYAMLFiles removes node from all YAML subscription files (legacy wrapper for compatibility)
+func deleteNodeFromYAMLFiles(subscribeDir, nodeName string) error {
+	_, err := deleteNodeFromYAMLFilesWithLog(subscribeDir, nodeName)
+	return err
+}
+
+// removeNodeFromProxyGroupsNode removes node references from proxy-groups
+func removeNodeFromProxyGroupsNode(groupsNode *yaml.Node, nodeName string) {
+	if groupsNode.Kind != yaml.SequenceNode {
+		return
+	}
+
+	for _, groupNode := range groupsNode.Content {
+		if groupNode.Kind != yaml.MappingNode {
+			continue
+		}
+
+		// Find the "proxies" key in this group
+		for i := 0; i < len(groupNode.Content); i += 2 {
+			if i+1 >= len(groupNode.Content) {
+				break
+			}
+			keyNode := groupNode.Content[i]
+			if keyNode.Value == "proxies" {
+				valueNode := groupNode.Content[i+1]
+				if valueNode.Kind == yaml.SequenceNode {
+					// Remove proxy nodes that match nodeName
+					newContent := make([]*yaml.Node, 0, len(valueNode.Content))
+					for _, proxyNode := range valueNode.Content {
+						if proxyNode.Kind == yaml.ScalarNode && proxyNode.Value != nodeName {
+							newContent = append(newContent, proxyNode)
+						}
+					}
+					valueNode.Content = newContent
+				}
+				break
+			}
+		}
+	}
+}
+
+// removeNodeFromRulesNode removes rules that reference the node
+func removeNodeFromRulesNode(rulesNode *yaml.Node, nodeName string) {
+	if rulesNode.Kind != yaml.SequenceNode {
+		return
+	}
+
+	// Filter out rules that reference the node
+	newContent := make([]*yaml.Node, 0, len(rulesNode.Content))
+	for _, ruleNode := range rulesNode.Content {
+		if ruleNode.Kind == yaml.ScalarNode {
+			if !containsNodeName(ruleNode.Value, nodeName) {
+				newContent = append(newContent, ruleNode)
+			}
+		} else {
+			newContent = append(newContent, ruleNode)
+		}
+	}
+	rulesNode.Content = newContent
+}

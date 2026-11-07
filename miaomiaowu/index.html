@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/x-icon" href="./images/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Primary Meta Tags -->
+    <title>妙妙屋</title>
+    <meta name="title" content="妙妙屋" />
+    <meta name="description" content="妙妙屋 By miaomiaowu.net" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://miaomiaowu.net" />
+    <meta property="og:title" content="妙妙屋" />
+    <meta property="og:description" content="妙妙屋 By miaomiaowu.net" />
+    <meta property="og:image" content="./images/preview.png" />
+
+    <!-- Twitter -->
+    <meta
+      property="twitter:card"
+      content="https://miaomiaowu.net/images/preview.png"
+    />
+    <meta property="twitter:url" content="https://miaomiaowu.net" />
+    <meta property="twitter:title" content="妙妙屋" />
+    <meta property="twitter:description" content="妙妙屋 By miaomiaowu.net" />
+    <meta property="twitter:image" content="./safari-pinned-tab.svg" />
+
+    <meta name="theme-color" content="#f5f6f8" />
+    <script>
+      ;(function () {
+        var key = 'vite-ui-theme'
+        var stored = window.localStorage.getItem(key)
+        var cookie = document.cookie.match(
+          new RegExp('(?:^|; )' + key + '=([^;]*)')
+        )
+        var preference = stored || (cookie ? decodeURIComponent(cookie[1]) : '')
+        var dark =
+          preference === 'dark' ||
+          ((preference === 'system' || !preference) &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.add(dark ? 'dark' : 'light')
+        document
+          .querySelector("meta[name='theme-color']")
+          ?.setAttribute('content', dark ? '#0f1115' : '#f5f6f8')
+      })()
+    </script>
+    <!--
+      面板壁纸/玻璃色调注入点:服务端把下面这个占位符换成一段 CSS 变量声明
+      (--g-dim / --g-wallpaper / 自定义色调),没配置就留空。放 <head>:它只发变量、不发规则,
+      变量要在应用样式表求值之前就位。见 internal/web/handler.go。
+    -->
+    <style id="mmw-panel-wallpaper">
+      __MMW_PANEL_WALLPAPER__
+    </style>
+  </head>
+
+  <body>
+    <script>
+      ;(function () {
+        var c = document.cookie.match(/(?:^|; )mmw-theme-style=([^;]*)/)
+        var v = c ? c[1] : ''
+        if (v === 'flat') {
+          document.documentElement.classList.add('theme-flat')
+        } else if (v === 'anime') {
+          document.documentElement.classList.add('theme-anime')
+          var f = document.querySelector("link[rel~='icon']")
+          if (f) f.href = '/images/anime-favicon.png'
+        } else if (v === 'glass') {
+          document.documentElement.classList.add('theme-glass')
+        }
+        // 玻璃主题的色调与「降低透明度」是 data 属性(与明暗/主题正交),首屏就要就位,
+        // 否则会先按默认色调渲染一帧再跳变。值由服务端注入(见 internal/web/handler.go);
+        // dev 模式占位符不被替换,indexOf 守卫会跳过。
+        var tone = '__MMW_GLASS_TONE__'
+        if (tone && tone.indexOf('__MMW_') !== 0)
+          document.documentElement.setAttribute('data-glass-tone', tone)
+        var rt = '__MMW_REDUCE_TRANSPARENCY__'
+        if (rt === 'true')
+          document.documentElement.setAttribute('data-glass-reduce', 'true')
+      })()
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
