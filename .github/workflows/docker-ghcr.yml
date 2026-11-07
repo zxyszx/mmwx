@@ -1,15 +1,6 @@
 name: Docker GHCR
 
 on:
-  push:
-    branches:
-      - main
-      - "codex/**"
-    tags:
-      - "v*"
-    paths-ignore:
-      - "**/*.md"
-      - ".gitignore"
   workflow_dispatch:
     inputs:
       platforms:

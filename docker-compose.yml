@@ -1,7 +1,7 @@
 services:
   miaomiaowu:
-    image: miaomiaowu-parking:latest
-    container_name: miaomiaowu
+    build: .
+    image: mmwx:local
     restart: unless-stopped
     user: root
     environment:
@@ -10,12 +10,12 @@ services:
       - LOG_LEVEL=info
 
     ports:
-      - "8080:8080"
+      - "${MMWX_PORT:-8080}:8080"
 
     volumes:
-      - parking_data:/app/data
-      - ./subscribes:/app/subscribes
-      - ./rule_templates:/app/rule_templates
+      - mmwx_data:/app/data
+      - mmwx_subscribes:/app/subscribes
+      - mmwx_rule_templates:/app/rule_templates
 
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
@@ -25,6 +25,6 @@ services:
       retries: 3
 
 volumes:
-  parking_data:
-    external: true
-    name: miaomiaowu_data
+  mmwx_data:
+  mmwx_subscribes:
+  mmwx_rule_templates:

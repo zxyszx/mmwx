@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -19,10 +18,7 @@ import (
 	"miaomiaowu/internal/version"
 )
 
-const (
-	githubRepo   = "iluobei/miaomiaowu"
-	githubAPIURL = "https://api.github.com/repos/%s/releases/latest"
-)
+const sourceUpdateMessage = "mmwx 暂未提供自有发行物，网页更新不可用；请按 README 从 mmwx 源码重新构建并保留原数据卷"
 
 // UpdateInfo contains version update information
 type UpdateInfo struct {
@@ -62,7 +58,7 @@ func NewUpdateCheckHandler() http.Handler {
 
 		info, err := checkLatestVersion()
 		if err != nil {
-			writeUpdateError(w, http.StatusInternalServerError, fmt.Errorf("检查更新失败: %w", err))
+			writeUpdateError(w, http.StatusServiceUnavailable, err)
 			return
 		}
 
@@ -83,7 +79,7 @@ func NewUpdateApplyHandler() http.Handler {
 		// 1. Get latest version info
 		info, err := checkLatestVersion()
 		if err != nil {
-			writeUpdateError(w, http.StatusInternalServerError, fmt.Errorf("检查更新失败: %w", err))
+			writeUpdateError(w, http.StatusServiceUnavailable, err)
 			return
 		}
 
@@ -256,63 +252,10 @@ func NewUpdateApplySSEHandler() http.Handler {
 	})
 }
 
-// checkLatestVersion fetches the latest release info from GitHub
+// No release has been approved for mmwx. Fail closed before any network,
+// temporary file, binary replacement, or restart operation in every handler.
 func checkLatestVersion() (*UpdateInfo, error) {
-	url := fmt.Sprintf(githubAPIURL, githubRepo)
-	logger.Debug("[系统更新] 检查更新", "url", url)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		logger.Error("[系统更新] 创建请求失败", "error", err)
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "miaomiaowu-updater")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("[系统更新] 请求GitHub API失败", "error", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		logger.Error("[系统更新] GitHub API返回错误", "status", resp.StatusCode)
-		return nil, fmt.Errorf("GitHub API 返回状态码: %d", resp.StatusCode)
-	}
-
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		logger.Error("[系统更新] 解析GitHub响应失败", "error", err)
-		return nil, fmt.Errorf("解析 GitHub 响应失败: %w", err)
-	}
-	logger.Debug("[系统更新] 获取到最新版本", "tag", release.TagName)
-
-	// Select download URL based on current OS/arch
-	arch := runtime.GOARCH
-	osName := runtime.GOOS
-	binaryName := fmt.Sprintf("mmw-%s-%s", osName, arch)
-
-	var downloadURL string
-	for _, asset := range release.Assets {
-		if asset.Name == binaryName {
-			downloadURL = asset.BrowserDownloadURL
-			break
-		}
-	}
-
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	hasUpdate := compareVersions(version.Version, latestVersion)
-
-	return &UpdateInfo{
-		CurrentVersion: version.Version,
-		LatestVersion:  latestVersion,
-		HasUpdate:      hasUpdate,
-		ReleaseURL:     release.HTMLURL,
-		DownloadURL:    downloadURL,
-		ReleaseNotes:   release.Body,
-	}, nil
+	return nil, errors.New(sourceUpdateMessage)
 }
 
 // compareVersions returns true if latest > current

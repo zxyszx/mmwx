@@ -29,180 +29,61 @@
 
 ## 安装部署
 
+本仓库是 [zxyszx/mmwx](https://github.com/zxyszx/mmwx)，基于 [zxyszx/miaomiaowu](https://github.com/zxyszx/miaomiaowu)（上游 [iluobei/miaomiaowu](https://github.com/iluobei/miaomiaowu)）完整源码维护。原版功能、主题、版权和许可保留；下面的命令构建本仓库，不使用上游应用镜像或二进制。
+
 ### 方式 1：Docker 部署（推荐）
 
-使用 Docker 是最简单快捷的部署方式，无需配置任何依赖环境。
-
-#### 基础部署
+需要 Git、Docker 和 Compose 插件。当前没有可推荐的自有预构建镜像或二进制release，请从源码构建：
 
 ```bash
-docker run -d \
-  --user root \
-  --name miaomiaowu \
+git clone https://github.com/zxyszx/mmwx.git
+cd mmwx
+docker compose up --build -d
+docker compose logs --tail=50
+```
+
+浏览器访问 **http://服务器IP:8080**，按首次启动初始化向导设置账户。宿主端口被占用时，先 `export MMWX_PORT=8081` 再启动，访问地址同步改为8081。HTTP不加密，请限制访问来源，或另行配置HTTPS代理。
+
+数据、订阅和规则模板存于本Compose项目创建的三个独立命名卷，不复用原版现场external卷或Python增量版数据。停止用 `docker compose down`，不要加 `-v`；重建时继续使用相同项目目录/项目名和数据卷。全新规则卷从镜像内本仓库文件初始化，后续保留用户修改。
+
+<details>
+<summary>不用Compose，直接docker build / run</summary>
+
+在同一源码目录中执行（不要与Compose同时占用8080）：
+
+```bash
+docker build -t mmwx:local .
+docker run -d --name mmwx \
   -p 8080:8080 \
-  -v $(pwd)/mmw-data:/app/data \
-  -v $(pwd)/subscribes:/app/subscribes \
-  -v $(pwd)/rule_templates:/app/rule_templates \
-  ghcr.io/iluobei/miaomiaowu:latest
+  -e PORT=8080 -e DATABASE_PATH=/app/data/traffic.db \
+  -v mmwx_data:/app/data \
+  -v mmwx_subscribes:/app/subscribes \
+  -v mmwx_rule_templates:/app/rule_templates \
+  mmwx:local
+docker logs --tail=50 mmwx
 ```
 
-参数说明：
-- `-p 8080:8080` 将容器端口映射到宿主机，按需调整。
-- `-v ./mmw-data:/app/data` 持久化数据库文件，防止容器重建时数据丢失。
-- `-v ./subscribes:/app/subscribes` 订阅文件存放目录
-- `-v ./rule_templates:/app/rule_templates` 规则模板存放目录
-- `-e JWT_SECRET=your-secret` 可选参数，配置token密钥，建议改成随机字符串
-- 其他环境变量（如 `LOG_LEVEL`）同下文“环境变量”章节，可通过 `-e` 继续添加。
+停止用 `docker stop mmwx`。保留命名卷，重建容器仍挂相同卷；不要将已有其他系统的数据目录直接挂载到此容器。
 
-更新镜像后可执行：
-```bash
-docker pull ghcr.io/iluobei/miaomiaowu:latest
-docker stop miaomiaowu && docker rm miaomiaowu
-```
-然后按照上方命令重新启动服务。
-
-#### Docker Compose 部署
-
-创建 `docker-compose.yml` 文件：
-
-```yaml
-version: '3.8'
-
-services:
-  miaomiaowu:
-    image: ghcr.io/iluobei/miaomiaowu:latest
-    container_name: miaomiaowu
-    restart: unless-stopped
-    user: root
-    environment:
-      - PORT=8080
-      - DATABASE_PATH=/app/data/traffic.db
-      - LOG_LEVEL=info
-
-    ports:
-      - "8080:8080"
-
-    volumes:
-      - ./data:/app/data
-      - ./subscribes:/app/subscribes
-      - ./rule_templates:/app/rule_templates
-
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
-      interval: 30s
-      timeout: 3s
-      start_period: 5s
-      retries: 3
-
-```
-
-参数说明：
-- `-p 8080:8080` 将容器端口映射到宿主机，按需调整。
-- `-e JWT_SECRET=your-secret` 可选参数，配置token密钥，建议改成随机字符串
-- 其他环境变量（如 `LOG_LEVEL`）同下文“环境变量”章节，可通过 `-e` 继续添加。
-
-映射目录说明:
-```
-volumes:     #这是挂载下面这三个目录到宿主机的，如果你不知道这三个目录是干嘛的，不需要添加
-  - ./mmw-data:/app/data #持久化数据库文件，防止容器重建时数据丢失。
-  - ./subscribes:/app/subscribes #订阅文件存放目录
-  - ./rule_templates:/app/rule_templates #规则模板存放目录
-```
-
-启动服务：
-
-```bash
-docker-compose up -d
-```
-
-查看日志：
-
-```bash
-docker-compose logs -f
-```
-
-停止服务：
-
-```bash
-docker-compose down
-```
-
-#### 数据持久化说明
-
-容器使用两个数据卷进行数据持久化：
-
-- `/app/data` - 存储 SQLite 数据库文件
-- `/app/subscribes` - 存储订阅配置文件
-- `/app/rule_templates` - 存储规则文件模板
-
-**重要提示**：请确保定期备份这两个目录的数据。
+</details>
 
 ### 方式 2：一键安装（Linux）
-#### ⚠⚠⚠ 注意：0.1.1版本修改了服务名称，无法通过脚本更新，只能重新安装
-#### 先执行以下命令卸载及转移数据
-旧服务卸载及备份转移
-```
-sudo systemctl stop traffic-info
-sudo systemctl disable traffic-info
-sudo rm -rf /etc/systemd/system/traffic-info.service
-sudo rm -f /usr/local/bin/traffic-info
-sudo cp -rf /var/lib/traffic-info/* /etc/mmw/
-```
-**自动安装为 systemd 服务（Debian/Ubuntu）：**
+
+**暂未提供mmwx自有二进制发行物。** `install.sh` 和 `quick-install.sh` 的安装、更新及卸载入口会明确拒绝执行，不下载上游程序，也不修改现有服务或数据。请先使用上面的源码Docker部署；不要把上游安装命令当作mmwx安装入口。
+
+### 更新与备份
+
+网页更新检查和执行目前会明确提示“未提供自有发行物”，不会下载上游程序。需要更新时，先停止服务并一致性备份上述三个卷，确认目标提交与数据兼容后，在原项目目录获取已验收源码，再重新构建：
+
 ```bash
-# 下载并运行安装脚本
-curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/install.sh | bash
+git pull --ff-only
+docker compose up --build -d
 ```
 
-安装完成后，服务将自动启动，访问 `http://服务器IP:8080` 即可。
+该命令不会替代备份或数据兼容性检查。保留原镜像、源码版本及备份；不承诺任意跨版本数据回退。日志只在本机查看，反馈前删除账户、订阅链接和密钥等敏感内容。
 
-**更新到最新版本：**
-```bash
-# systemd 服务更新
-curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/install.sh | sudo bash -s update
-```
+普通main推送不自动发布镜像；镜像工作流仅允许维护者显式手动触发。正式自有release/镜像通过验收并公开后，再更新部署入口。
 
-**卸载服务：**
-```bash
-# 卸载 systemd 服务（保留数据）
-curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/install.sh | sudo bash -s uninstall
-
-# 卸载后如需完全清除数据，手动删除数据目录
-sudo rm -rf /etc/mmw
-```
-
-**简易安装（手动运行）：**
-```bash
-# 一键下载安装
-curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/quick-install.sh | bash
-
-# 运行服务
-./mmw
-```
-
-**卸载服务：**
-```bash
-# 卸载 systemd 服务（保留数据）
-curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/quick-install.sh | sudo bash -s uninstall
-
-# 卸载后如需完全清除数据，手动删除数据目录
-sudo rm -rf ./data ./subscribes ./rule_templates
-```
-
-**更新简易安装版本：**
-```bash
-# 更新到最新版本
-curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/quick-install.sh | bash -s update
-```
-
-**Windows：**
-```powershell
-# 从 Releases 页面下载 mmw-windows-amd64.exe
-# https://github.com/iluobei/miaomiaowu/releases
-
-# 双击运行或在命令行中执行
-.\mmw-windows-amd64.exe
-```
 <details>
 <summary>页面截图</summary>
 

@@ -5,6 +5,15 @@
 
 set -e
 
+# mmwx has no verified binary release yet. Refuse before package, service or
+# filesystem changes; the upstream installer is retained below for provenance.
+cat >&2 <<'MMWX_SOURCE_ONLY'
+mmwx 暂未提供自有二进制发行物；本安装/更新/卸载入口已停用，不会下载上游程序或修改现有服务和数据。
+请从 https://github.com/zxyszx/mmwx 获取源码，并按 README 使用 docker compose up --build -d。
+已有服务请先核对其实际部署来源，不要用此入口重装或卸载。
+MMWX_SOURCE_ONLY
+exit 2
+
 # 配置
 VERSION="v0.8.6"
 GITHUB_REPO="iluobei/miaomiaowu"

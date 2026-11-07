@@ -45,8 +45,9 @@ COPY . .
 COPY --from=frontend-builder /app/internal/web/dist ./internal/web/dist
 
 # Build backend with optimizations (CGO enabled for SQLite WAL support)
-# Use TARGETOS and TARGETARCH for multi-platform builds
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
+# BuildKit supplies target platform args; classic/native builders may omit them.
+# In that case use this builder image's Go toolchain architecture, matching gcc.
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-$(go env GOOS)} GOARCH=${TARGETARCH:-$(go env GOARCH)} go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /app/server \

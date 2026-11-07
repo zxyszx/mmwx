@@ -3,6 +3,13 @@
 
 set -e
 
+# No mmwx binary release is available. Stop before any download/data changes.
+cat >&2 <<'MMWX_SOURCE_ONLY'
+mmwx 暂未提供自有二进制发行物；本安装/更新/卸载入口已停用，不会下载上游程序或修改现有服务和数据。
+请从 https://github.com/zxyszx/mmwx 获取源码，并按 README 使用 docker compose up --build -d。
+MMWX_SOURCE_ONLY
+exit 2
+
 VERSION="v0.8.6"
 GITHUB_REPO="iluobei/miaomiaowu"
 VERSION_FILE=".version"
