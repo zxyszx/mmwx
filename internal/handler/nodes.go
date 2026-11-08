@@ -164,6 +164,9 @@ func (h *nodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path = strings.Trim(path, "/")
 
 	switch {
+	// 节点管理列表的隐藏 / 取消隐藏(见 nodes_hidden.go)
+	case path == "hidden" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		h.handleHiddenNodes(w, r)
 	case path == "" && r.Method == http.MethodGet:
 		h.handleList(w, r)
 	case path == "" && r.Method == http.MethodPost:
@@ -198,6 +201,8 @@ func (h *nodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleBatchRename(w, r)
 	case path == "batch-disable-skip-cert" && r.Method == http.MethodPost:
 		h.handleBatchDisableSkipCert(w, r)
+	case path == "batch-reality-options" && r.Method == http.MethodPost:
+		h.handleBatchRealityOptions(w, r)
 	default:
 		allowed := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
 		methodNotAllowed(w, allowed...)
@@ -717,12 +722,9 @@ func (h *nodesHandler) handleUpdateConfig(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate required fields
-	requiredFields := []string{"name", "type", "server", "port"}
-	for _, field := range requiredFields {
-		if _, ok := clashConfigMap[field]; !ok {
-			writeBadRequest(w, fmt.Sprintf("配置缺少必需字段: %s", field))
-			return
-		}
+	if missing := missingRequiredClashField(clashConfigMap); missing != "" {
+		writeBadRequest(w, fmt.Sprintf("配置缺少必需字段: %s", missing))
+		return
 	}
 
 	// Get existing node
@@ -1050,6 +1052,102 @@ func (h *nodesHandler) handleBatchDisableSkipCert(w http.ResponseWriter, r *http
 		"status": "disabled", "success": successCount, "failed": failCount,
 		"skipped": skippedCount, "total": len(req.NodeIDs), "nodes": updatedNodes,
 	})
+}
+
+// handleBatchRealityOptions 批量开关 VLESS REALITY 节点的 X25519MLKEM768 后量子密钥交换。
+// 只改客户端配置里的 reality-opts.support-x25519mlkem768,服务端不用动;关闭时直接删掉该键。
+func (h *nodesHandler) handleBatchRealityOptions(w http.ResponseWriter, r *http.Request) {
+	username := auth.UsernameFromContext(r.Context())
+	if username == "" {
+		writeError(w, http.StatusUnauthorized, errors.New("用户未认证"))
+		return
+	}
+	var req struct {
+		NodeIDs               []int64 `json:"node_ids"`
+		SupportX25519MLKEM768 *bool   `json:"support_x25519mlkem768"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, "请求格式不正确")
+		return
+	}
+	if len(req.NodeIDs) == 0 {
+		writeBadRequest(w, "节点列表不能为空")
+		return
+	}
+	if req.SupportX25519MLKEM768 == nil {
+		writeBadRequest(w, "至少选择一个需要修改的参数")
+		return
+	}
+	var successCount, failCount, skippedCount int
+	var updatedNodes []nodeDTO
+	var yamlUpdates []NodeUpdate
+	for _, nodeID := range req.NodeIDs {
+		node, err := h.repo.GetNode(r.Context(), nodeID, username)
+		if err != nil {
+			failCount++
+			continue
+		}
+		changed := updateRealityMLKEMInJSON(&node.ClashConfig, *req.SupportX25519MLKEM768)
+		changed = updateRealityMLKEMInJSON(&node.ParsedConfig, *req.SupportX25519MLKEM768) || changed
+		if !changed {
+			// 非 VLESS REALITY 节点,或已经是目标值
+			skippedCount++
+			continue
+		}
+		updated, err := h.repo.UpdateNode(r.Context(), node)
+		if err != nil {
+			failCount++
+			continue
+		}
+		if updated.ClashConfig != "" {
+			yamlUpdates = append(yamlUpdates, NodeUpdate{OldName: updated.NodeName, NewName: updated.NodeName, ClashConfigJSON: updated.ClashConfig})
+		}
+		successCount++
+		updatedNodes = append(updatedNodes, convertNode(updated))
+	}
+	if len(yamlUpdates) > 0 {
+		if err := h.yamlSyncManager.BatchSyncNodes(yamlUpdates); err != nil {
+			logger.Info("[批量修改REALITY参数] YAML 同步失败", "error", err)
+		}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"status": "updated", "success": successCount, "failed": failCount,
+		"skipped": skippedCount, "total": len(req.NodeIDs), "nodes": updatedNodes,
+	})
+}
+
+// updateRealityMLKEMInJSON 只处理 type=vless 且带 reality-opts 的 clash 配置:enable 写 true,disable 删键。
+func updateRealityMLKEMInJSON(raw *string, enable bool) bool {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return false
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(*raw), &m) != nil || !strings.EqualFold(fmt.Sprint(m["type"]), "vless") {
+		return false
+	}
+	opts, ok := m["reality-opts"].(map[string]any)
+	if !ok || opts == nil {
+		return false
+	}
+	const key = "support-x25519mlkem768"
+	old, has := opts[key]
+	if enable {
+		if v, ok := old.(bool); ok && v {
+			return false
+		}
+		opts[key] = true
+	} else {
+		if !has {
+			return false
+		}
+		delete(opts, key)
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return false
+	}
+	*raw = string(b)
+	return true
 }
 
 func disableSkipCertVerifyInJSON(raw *string) bool {
@@ -1490,4 +1588,21 @@ func (h *nodesHandler) handleUpdateProbeBinding(w http.ResponseWriter, r *http.R
 	respondJSON(w, http.StatusOK, map[string]any{
 		"node": convertNode(node),
 	})
+}
+
+// missingRequiredClashField 返回节点配置缺少的必需字段名,全部齐备时返回空串。
+// 端口字段放宽为 port / port-range / ports 三选一:mieru 用 port-range、
+// hysteria/hysteria2 用 ports 做端口跳跃时,mihomo 允许省略 port(见 GitHub issue #124)。
+func missingRequiredClashField(cfg map[string]interface{}) string {
+	for _, field := range []string{"name", "type", "server"} {
+		if _, ok := cfg[field]; !ok {
+			return field
+		}
+	}
+	for _, field := range []string{"port", "port-range", "ports"} {
+		if _, ok := cfg[field]; ok {
+			return ""
+		}
+	}
+	return "port"
 }

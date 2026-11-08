@@ -252,8 +252,7 @@ func NewUpdateApplySSEHandler() http.Handler {
 	})
 }
 
-// No release has been approved for mmwx. Fail closed before any network,
-// temporary file, binary replacement, or restart operation in every handler.
+// No approved mmwx binary release: stop before network or binary changes.
 func checkLatestVersion() (*UpdateInfo, error) {
 	return nil, errors.New(sourceUpdateMessage)
 }

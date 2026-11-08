@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,6 +46,81 @@ func isBlockedFetchIP(ip net.IP) bool {
 	return false
 }
 
+// fetchAllowList 是管理员配置的内网拉取白名单（system_settings.ssrf_allowed_hosts），
+// 用于放行部署在内网的 sub-store 等外部订阅源。命中的域名或 IP 跳过内网地址拦截。
+var fetchAllowList atomic.Pointer[ssrfAllowList]
+
+const SSRFAllowListSettingKey = "ssrf_allowed_hosts"
+
+type ssrfAllowList struct {
+	hosts    []string // 小写域名，同时匹配其子域名
+	networks []*net.IPNet
+}
+
+// parseSSRFAllowList 解析白名单，每行（或逗号分隔）一项：域名、IP 或 CIDR。
+// 返回无法识别的项，便于接口提示。
+func parseSSRFAllowList(raw string) (*ssrfAllowList, []string) {
+	list := &ssrfAllowList{}
+	var invalid []string
+	for _, item := range strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == ',' || r == '\r' }) {
+		item = strings.TrimSpace(item)
+		if item == "" || strings.HasPrefix(item, "#") {
+			continue
+		}
+		if _, network, err := net.ParseCIDR(item); err == nil {
+			list.networks = append(list.networks, network)
+			continue
+		}
+		if ip := net.ParseIP(item); ip != nil {
+			bits := 128
+			if ip.To4() != nil {
+				ip, bits = ip.To4(), 32
+			}
+			list.networks = append(list.networks, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		host := strings.TrimPrefix(strings.ToLower(item), "*.")
+		host = strings.TrimSuffix(host, ".")
+		if host == "" || strings.ContainsAny(host, "/:@ ") {
+			invalid = append(invalid, item)
+			continue
+		}
+		list.hosts = append(list.hosts, host)
+	}
+	return list, invalid
+}
+
+// SetSSRFAllowList 更新内网拉取白名单，立即生效。
+func SetSSRFAllowList(raw string) {
+	list, _ := parseSSRFAllowList(raw)
+	fetchAllowList.Store(list)
+}
+
+func (l *ssrfAllowList) allowsHost(host string) bool {
+	if l == nil {
+		return false
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, allowed := range l.hosts {
+		if host == allowed || strings.HasSuffix(host, "."+allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *ssrfAllowList) allowsIP(ip net.IP) bool {
+	if l == nil {
+		return false
+	}
+	for _, network := range l.networks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateFetchURL(rawURL string) error {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
@@ -65,10 +141,14 @@ func ssrfSafeDialContext(dialer *net.Dialer) func(context.Context, string, strin
 		if err != nil {
 			return nil, err
 		}
+		allow := fetchAllowList.Load()
 		if ip := net.ParseIP(host); ip != nil {
-			if isBlockedFetchIP(ip) {
+			if isBlockedFetchIP(ip) && !allow.allowsIP(ip) {
 				return nil, errSSRFBlocked
 			}
+			return dialer.DialContext(ctx, network, addr)
+		}
+		if allow.allowsHost(host) {
 			return dialer.DialContext(ctx, network, addr)
 		}
 		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
@@ -79,7 +159,7 @@ func ssrfSafeDialContext(dialer *net.Dialer) func(context.Context, string, strin
 			return nil, fmt.Errorf("域名 %s 未解析到任何地址", host)
 		}
 		for _, resolved := range ips {
-			if isBlockedFetchIP(resolved.IP) {
+			if isBlockedFetchIP(resolved.IP) && !allow.allowsIP(resolved.IP) {
 				return nil, errSSRFBlocked
 			}
 		}

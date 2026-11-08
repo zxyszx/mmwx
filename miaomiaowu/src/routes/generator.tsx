@@ -1513,7 +1513,7 @@ function SubscriptionGeneratorPage() {
         if (group.proxies && Array.isArray(group.proxies)) {
           group.proxies.forEach((proxy: string) => {
             // 只添加实际节点（不是特殊节点，也不是其他代理组）
-            if (!['DIRECT', 'REJECT', 'PROXY', 'no-resolve', '♻️ 自动选择', '🚀 节点选择'].includes(proxy) &&
+            if (!['DIRECT', 'REJECT', 'REJECT-DROP', 'PROXY', 'no-resolve', '♻️ 自动选择', '🚀 节点选择'].includes(proxy) &&
                 !groupNames.has(proxy)) {
               usedNodeNames.add(proxy)
             }
@@ -1624,6 +1624,7 @@ function SubscriptionGeneratorPage() {
     // 添加特殊节点
     proxyGroupNames.add('DIRECT')
     proxyGroupNames.add('REJECT')
+    proxyGroupNames.add('REJECT-DROP')
     proxyGroupNames.add('PROXY')
     proxyGroupNames.add('no-resolve')
 
@@ -1670,6 +1671,7 @@ function SubscriptionGeneratorPage() {
       // 添加特殊节点
       proxyGroupNames.add('DIRECT')
       proxyGroupNames.add('REJECT')
+      proxyGroupNames.add('REJECT-DROP')
       proxyGroupNames.add('PROXY')
       proxyGroupNames.add('no-resolve')
 

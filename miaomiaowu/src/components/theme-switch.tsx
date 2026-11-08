@@ -4,15 +4,15 @@ import { useTheme } from '@/context/theme-provider'
 import { Button } from '@/components/ui/button'
 
 export function ThemeSwitch() {
-  const { resolvedTheme, theme, setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
 
   /* Update theme-color meta tag
    * when theme is updated */
   useEffect(() => {
-    const themeColor = resolvedTheme === 'dark' ? '#0f1115' : '#f5f6f8'
+    const themeColor = theme === 'dark' ? '#020817' : '#fff'
     const metaThemeColor = document.querySelector("meta[name='theme-color']")
     if (metaThemeColor) metaThemeColor.setAttribute('content', themeColor)
-  }, [resolvedTheme])
+  }, [theme])
 
   // 循环切换: light -> dark -> system -> light
   const cycleTheme = () => {
@@ -27,8 +27,7 @@ export function ThemeSwitch() {
 
   // 根据当前主题选择图标
   const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : SunMoon
-  const label =
-    theme === 'light' ? '浅色模式' : theme === 'dark' ? '深色模式' : '跟随系统'
+  const label = theme === 'light' ? '浅色模式' : theme === 'dark' ? '深色模式' : '跟随系统'
 
   return (
     <Button
@@ -36,7 +35,7 @@ export function ThemeSwitch() {
       size='icon'
       aria-label={label}
       title={label}
-      className='app-header-control h-8 w-8'
+      className='h-9 w-9'
       onClick={cycleTheme}
     >
       <Icon className='size-[18px]' />

@@ -29,7 +29,7 @@
 
 ## 安装部署
 
-本仓库是 [zxyszx/mmwx](https://github.com/zxyszx/mmwx)，基于 [zxyszx/miaomiaowu](https://github.com/zxyszx/miaomiaowu)（上游 [iluobei/miaomiaowu](https://github.com/iluobei/miaomiaowu)）完整源码维护。原版功能、主题、版权和许可保留；下面的命令构建本仓库，不使用上游应用镜像或二进制。
+本仓库是 [zxyszx/mmwx](https://github.com/zxyszx/mmwx)，基于原作者 [iluobei/miaomiaowu](https://github.com/iluobei/miaomiaowu) 的正式版 `v0.10.1`（提交 `9f52f1785930e4dfff3c158e292ff300a5f81a3e`）完整源码维护。原版功能、主题、版权和许可保留；下面的命令构建本仓库，不使用上游应用镜像或二进制。
 
 ### 方式 1：Docker 部署（推荐）
 
@@ -44,7 +44,7 @@ docker compose logs --tail=50
 
 浏览器访问 **http://服务器IP:8080**，按首次启动初始化向导设置账户。宿主端口被占用时，先 `export MMWX_PORT=8081` 再启动，访问地址同步改为8081。HTTP不加密，请限制访问来源，或另行配置HTTPS代理。
 
-数据、订阅和规则模板存于本Compose项目创建的三个独立命名卷，不复用原版现场external卷或Python增量版数据。停止用 `docker compose down`，不要加 `-v`；重建时继续使用相同项目目录/项目名和数据卷。全新规则卷从镜像内本仓库文件初始化，后续保留用户修改。
+数据、订阅和规则模板存于本Compose项目创建的三个独立命名卷，不复用原版现场external卷或其他部署数据。停止用 `docker compose down`，不要加 `-v`；重建时继续使用相同项目目录/项目名和数据卷。全新规则卷从镜像内本仓库文件初始化，后续保留用户修改。
 
 <details>
 <summary>不用Compose，直接docker build / run</summary>
@@ -131,12 +131,59 @@ MIT License
 <details>
 <summary>更新日志</summary>
 
-### v0.8.6 (2026-09-18)
-- 新增合租管理：平台、共享账号、成员席位、续费记录和个人订阅提醒
-- 新增管理总览：收入日历、即将到期、平台席位使用率和成员概况
-- 重构 Light / Dark 两套后台主题、顶部导航和响应式布局
-- 改进到期通知调度、重复通知控制和相关测试覆盖
-
+### v0.10.1 (2026-11-07)
+- ⬆️ proxyparser 升到 v0.4.6:clash-to-surge 规则关键字按 Surge 写法转换,一键导入不再报「存在无效配置」
+- 🛠️ fix: Tailscale 节点在 Clash 订阅下发时被当作残缺节点剔掉(#135)
+- 📝 changelog 去掉自定义品牌移植与撤回的两条互相抵消的记录
+- 保存外部订阅前缀时立即重命名已有节点
+### v0.10.0 (2026-11-04)
+- 🛠️ fix: 节点页合并后缺少 DialogFooter 导入导致整页报错
+- 🌈 订阅健壮性补丁、节点列表隐藏与 PWA 开关(从妙妙屋X 移植)
+- 🌈 订阅获取开关:可关闭某个用户的全部订阅链接,支持限时打开到期自动关(从妙妙屋X 移植)
+- 🌈 推送通知新增邮件 SMTP 与国内推送渠道,按事件分发(从妙妙屋X 移植)
+- 🌈 sing-box / Quantumult X 模板与 Loon 规则集解析(从妙妙屋X 移植)
+- 🌈 菜单排序与显隐(从妙妙屋X 移植)
+- 🛠️ .gitignore 忽略各包目录下 go test 生成的 data/logs/
+- 🌈 Passkey(WebAuthn)登录,与密码 + 两步验证并存(从妙妙屋X 移植)
+- 🌈 正规 CA 证书节点不固定证书指纹(从妙妙屋X 移植)
+- 🌈 规则模板从来源链接更新、批量开启 VLESS REALITY X25519MLKEM768(从妙妙屋X 移植)
+- 🌈 系统日志查看与日志文件管理(从妙妙屋X 移植)
+- 🛠️ ci: 恢复 Build and Release 工作流(#133 顺带删掉了它)
+- 🌈 自动备份到 WebDAV / S3 / Google Drive(从妙妙屋X 移植)
+- ⬆️ proxyparser 升到 v0.4.5:hysteria2 分享链接支持 fm=(finalmask);sing-box 1.15 导入报 headerType / certificate_sha256 未知字段;Shadowrocket 里 VLESS Encryption 节点改为跳过并留注释;Surge 带 salamander / gecko 混淆的 Hysteria2 节点不再消失
+- 缩短外部订阅节点名前缀的帮助文案 (#3)
+- CI 只发布 Docker，节点名前缀按原始名重匹配 (#2)
+- 外部订阅支持可选的节点展示名前缀 (#1)
+### v0.9.3 (2026-10-22)
+- ⬆️ proxyparser 升到 v0.4.0:跟上游 Sub-Store 同步一轮
+- 🛠️ release.sh: changelog 排除版本号 commit 的 revert
+- 🌈 节点探测新增「始终探测所有节点」开关,打开后探测全部启用节点,无需逐个勾选
+- 🔒 security: 按外部订阅 ID 列代理集合配置时未校验归属,登录用户可枚举读取他人配置(#131)
+### v0.9.2 (2026-10-21)
+- 🔒 security: 构建工具链下限 go1.26.10(修复 CVE-2026-111943 / GO-2026-6809 失信中间证书未拒绝),x/text 升到 v0.39.0
+### v0.9.1 (2026-10-20)
+- 🛠️ fix: 节点列表复制 mieru 节点的 URI 时剪贴板为空(#129)
+- 🛠️ fix: mieru 节点导入丢掉 udp 与 handshake-mode(#130)—— proxyparser 升到 v0.3.9,移除 mierus 兼容层
+### v0.9.0 (2026-10-16)
+- 🌈 节点探测新增「不可用节点自动从订阅移除」,探测单次请求超时降到 3 秒
+- 🌈 规则集新增「抓取代理」(#125):主控连不上 GitHub 时规则集改从加速站抓取
+- ⬆️ proxyparser 升到 v0.3.5:Stash 订阅里的 mrs 规则集原样下发,不再把 .mrs 改写成 .yaml(Stash 已支持 mrs)
+### v0.8.9 (2026-10-13)
+- ⬆️ proxyparser 升到 v0.3.4:Shadowrocket 放行 Snell v1–v6(模板版原来把 v4 以上整个丢掉)、Stash 放开到 v6,并同步上游 Sub-Store 一轮(Surge 的 udp-relay 只留给 Shadowsocks / SOCKS5、Loon server-dns、Egern ip_version 等)
+- 🌈 订阅客户端类型新增 MeowX(?t=meowx,格式与 Clash 相同);Auto 自动识别补上 v2ray 一族的兜底(v2rayU / v2rayA / 只报 v2ray/x.y.z 的客户端以前拿到的是 Clash 配置)与 Happ —— 这张表同时是「拦截未知订阅 UA」的白名单,这些客户端此前开了拦截会被 403;Auto 换成自己的图标;附测试
+- 🛠️ fix: 写回 YAML 时去引号的逻辑改成以解析器为准(#126 的后续)—— #127 修好了反斜杠翻倍,但同一个函数靠正则猜「哪里是双引号字符串、去掉引号安不安全」,还有别的写坏:流式列表里带逗号 / 方括号的名字被拆开(proxies: ["🇭🇰 香港, 01", DIRECT] 变成三项),规则里写的 \u4e00 正则被改成汉字。现在位置、解码后的值、所在上下文全部取自解析器:能原样写成 plain 的才去引号(放回它所在的上下文再解析一遍核对),不能的保留引号、只把 \U 转义换成字符;最后整份再解析一遍与原文逐节点比对,不同就退回保留引号的写法,所以这个函数改不了 YAML 的数据。nameserver-policy 下面不管嵌在哪一层都保留引号;不是合法 YAML 的文本原样返回;附测试(含 2000 组随机内容连续写回三轮)
+- fix: 修复写回 YAML 时反斜杠指数翻倍
+- feat: AI 服务规则组加入 Claude 规则集(clash-pt-rules 的 claude.yaml)
+### v0.8.8 (2026-10-09)
+- 🌈 聚合订阅支持绑定 V2 模板，自动转换为 V3 后绑定(#125)
+### v0.8.7 (2026-10-03)
+- 🌈 Docker 镜像 latest 标签始终提供 arm64 架构(#122)
+- 🛠️ fix: mieru 节点使用 port-range 时无法保存配置(#124)
+### v0.8.6 (2026-09-28)
+- ⬆️ 升级 proxyparser 到 v0.2.9：修复 hy2/hysteria 主机后写端口范围时端口跳跃丢失(#86)
+- 🛠️ fix: 修复中转配置丢失、订阅编辑页 REJECT-DROP 误报缺失，新增内网拉取白名单
+- fix: telegram-ip 规则集的落地文件与 telegram 重名
+- 🐛 fix: 修复 ws-opts 空值被写成字符串导致订阅无法加载
 ### v0.8.5 (2026-09-11)
 - 🛠️ fix: sync-version.sh 在 macOS 上同步不了版本号
 - 🛠️ fix: 节点列表复制 URI 时丢掉 AnyTLS 的 REALITY 参数(#116)

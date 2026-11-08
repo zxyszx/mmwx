@@ -37,6 +37,7 @@ import {
   Undo2,
   Activity,
   Eye,
+  EyeOff,
   Copy,
   ChevronDown,
   ChevronLeft,
@@ -106,6 +107,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -143,6 +145,7 @@ import {
 } from '@/components/ui/tooltip'
 import { ExternalSyncNodeDialog } from '@/components/external-sync-node-dialog'
 import { FlagEmojiPicker } from '@/components/flag-emoji-picker'
+import { HideNodesDialog } from '@/components/hide-nodes-dialog'
 import { NodeProbeDialog } from '@/components/node-probe-dialog'
 import { SpeedTestDialog } from '@/components/speedtest-dialog'
 import { Twemoji } from '@/components/twemoji'
@@ -687,6 +690,19 @@ function getStoredRenderMode(): RenderMode | null {
   return null
 }
 
+// 未手动改过前缀时，用订阅名生成默认展示名前缀；用户清空后保持为空。
+function resolveNodeNamePrefix(touched, current, subscriptionName) {
+  if (touched) return current || ''
+  const name = (subscriptionName || '').trim()
+  return name ? `〖${name}〗` : ''
+}
+
+function applyNodeNamePrefix(prefix, name) {
+  if (!prefix || !String(prefix).trim()) return name
+  if (typeof name === 'string' && name.startsWith(prefix)) return name
+  return `${prefix}${name}`
+}
+
 function NodesPage() {
   const externalSyncSelection = useExternalSyncSelection()
   const { auth } = useAuthStore()
@@ -768,6 +784,15 @@ function NodesPage() {
   const [subscriptionAutoUpdate, setSubscriptionAutoUpdate] = useState(false)
   const [subscriptionUpdateInterval, setSubscriptionUpdateInterval] =
     useState<number>(60)
+  // 节点展示名前缀。未手动编辑时随订阅名变为 〖订阅名〗，清空则不加前缀。
+  const [nodeNamePrefix, setNodeNamePrefix] = useState('')
+  const nodeNamePrefixTouched = useRef(false)
+
+  useEffect(() => {
+    if (nodeNamePrefixTouched.current) return
+    const tag = subscriptionTag.trim()
+    setNodeNamePrefix(tag ? `〖${tag}〗` : '')
+  }, [subscriptionTag])
 
   // 导入节点卡片折叠状态 - 默认折叠
   const [isInputCardExpanded, setIsInputCardExpanded] = useState(false)
@@ -815,6 +840,10 @@ function NodesPage() {
   >(null)
   const [batchRenameDialogOpen, setBatchRenameDialogOpen] = useState(false)
   const [batchRenameText, setBatchRenameText] = useState<string>('')
+  // VLESS REALITY 客户端参数批量配置:目前只有 X25519MLKEM768 一个开关
+  const [realityOptionsDialogOpen, setRealityOptionsDialogOpen] =
+    useState(false)
+  const [realityMlkemEnabled, setRealityMlkemEnabled] = useState(true)
   const [findText, setFindText] = useState<string>('')
   const [replaceText, setReplaceText] = useState<string>('')
   const [prefixText, setPrefixText] = useState<string>('')
@@ -1354,14 +1383,18 @@ function NodesPage() {
           ? (parseYAML(editingClashConfig.config) as Record<string, unknown>)
           : JSON.parse(editingClashConfig.config)
 
-      // 检查必需字段
+      // 检查必需字段 (mieru 用 port-range、hysteria/hysteria2 用 ports 时可省略 port)
       if (
         !parsedConfig.name ||
         !parsedConfig.type ||
         !parsedConfig.server ||
-        !parsedConfig.port
+        (!parsedConfig.port &&
+          !parsedConfig['port-range'] &&
+          !parsedConfig.ports)
       ) {
-        setClashConfigError('配置缺少必需字段: name, type, server, port')
+        setClashConfigError(
+          '配置缺少必需字段: name, type, server, port (或 port-range / ports)'
+        )
         return
       }
 
@@ -2027,6 +2060,49 @@ function NodesPage() {
       toast.error(error.response?.data?.error || '批量关闭证书验证失败'),
   })
 
+  // 选中节点里 clash 配置为 vless 且带 reality-opts 的(REALITY 参数批量配置的候选)
+  const realityCandidates = useMemo(
+    () =>
+      (savedNodes as ParsedNode[]).filter((n) => {
+        if (!selectedNodeIds.has(n.id)) return false
+        try {
+          const cfg = JSON.parse(n.clash_config)
+          return (
+            cfg?.type?.toLowerCase() === 'vless' &&
+            !!cfg['reality-opts'] &&
+            typeof cfg['reality-opts'] === 'object'
+          )
+        } catch {
+          return false
+        }
+      }),
+    [savedNodes, selectedNodeIds]
+  )
+
+  const updateRealityOptionsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await api.post(
+        '/api/admin/nodes/batch-reality-options',
+        {
+          node_ids: realityCandidates.map((n) => n.id),
+          support_x25519mlkem768: realityMlkemEnabled,
+        }
+      )
+      return response.data
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['nodes'] })
+      toast.success(
+        `已更新 ${data.success} 个 VLESS REALITY 节点，跳过 ${data.skipped} 个`
+      )
+      setRealityOptionsDialogOpen(false)
+    },
+    onError: (error: any) =>
+      toast.error(
+        error.response?.data?.error || 'VLESS REALITY 参数修改失败'
+      ),
+  })
+
   // 批量添加地区 emoji
   const handleAddRegionEmoji = useCallback(async () => {
     const nodeIds = Array.from(selectedNodeIds)
@@ -2597,6 +2673,14 @@ function NodesPage() {
 
       let parsed: TempNode[] = []
 
+      // 优先使用用户输入的标签，如果没有则使用 defaultTag（从 Content-Disposition 提取或域名）
+      const finalTag = subscriptionTag.trim() || defaultTag
+      const namePrefix = resolveNodeNamePrefix(
+        nodeNamePrefixTouched.current,
+        nodeNamePrefix,
+        finalTag
+      )
+
       if (data.proxies) {
         // 后端已统一解析(v2ray / clash 均返回 proxies),并按 force_node_skip_cert 处理过证书字段，前端直接消费
         parsed = data.proxies.map((clashNode) => {
@@ -2607,7 +2691,10 @@ function NodesPage() {
             port: clashNode.port || 0,
             ...clashNode,
           }
-          const name = proxyNode.name || '未知'
+          const name = applyNodeNamePrefix(
+            namePrefix,
+            proxyNode.name || '未知'
+          )
           const parsedProxy = cloneProxyWithName(proxyNode, name)
           const clashProxy = cloneProxyWithName(clashNode, name)
 
@@ -2635,14 +2722,13 @@ function NodesPage() {
 
       // 保存外部订阅链接
       try {
-        // 优先使用用户输入的标签，如果没有则使用 defaultTag（从 Content-Disposition 提取或域名）
-        const finalTag = subscriptionTag.trim() || defaultTag
         await api.post('/api/user/external-subscriptions', {
           name: finalTag,
           url: variables.url,
           user_agent: variables.userAgent, // 保存 User-Agent
           auto_update: variables.autoUpdate,
           update_interval_minutes: variables.updateIntervalMinutes,
+          name_prefix: namePrefix,
         })
         // 刷新外部订阅列表和流量数据
         queryClient.invalidateQueries({ queryKey: ['external-subscriptions'] })
@@ -3213,8 +3299,71 @@ function NodesPage() {
     [selectedNodeIds, nodeOrder, savedNodes, debouncedSaveNodeOrder]
   )
 
+  // ===== 隐藏节点:只影响这里的列表显示,订阅 / 下发不受影响 =====
+  // 过滤放在列表这一层而不是 displayNodes:拖动排序要按全量节点算顺序,否则隐藏节点的位置会丢
+  const hiddenNodesQ = useQuery({
+    queryKey: ['nodes-hidden'],
+    queryFn: async () =>
+      (await api.get('/api/admin/nodes/hidden')).data as { ids: number[] },
+  })
+  const hiddenNodeIds = useMemo(
+    () => new Set<number>(hiddenNodesQ.data?.ids ?? []),
+    [hiddenNodesQ.data]
+  )
+  const [showHiddenNodes, setShowHiddenNodes] = useState(false)
+  const [hideDialogOpen, setHideDialogOpen] = useState(false)
+  const listNodes = useMemo(
+    () =>
+      showHiddenNodes || hiddenNodeIds.size === 0
+        ? displayNodes
+        : displayNodes.filter(
+            (n) => !(n.isSaved && n.dbId && hiddenNodeIds.has(n.dbId))
+          ),
+    [displayNodes, hiddenNodeIds, showHiddenNodes]
+  )
+  const hiddenCount = useMemo(
+    () => savedNodes.filter((n) => hiddenNodeIds.has(n.id)).length,
+    [savedNodes, hiddenNodeIds]
+  )
+  const hiddenBadge = (node: { isSaved?: boolean; dbId?: number }) =>
+    showHiddenNodes &&
+    node.isSaved &&
+    node.dbId &&
+    hiddenNodeIds.has(node.dbId) ? (
+      <Badge
+        variant='outline'
+        className='text-muted-foreground shrink-0 gap-1 text-[10px]'
+      >
+        <EyeOff className='size-3' />
+        已隐藏
+      </Badge>
+    ) : null
+  const saveHiddenNodes = async (next: Set<number>) => {
+    const toHide = [...next].filter((id) => !hiddenNodeIds.has(id))
+    const toShow = [...hiddenNodeIds].filter((id) => !next.has(id))
+    try {
+      if (toHide.length)
+        await api.post('/api/admin/nodes/hidden', { ids: toHide, hidden: true })
+      if (toShow.length)
+        await api.post('/api/admin/nodes/hidden', {
+          ids: toShow,
+          hidden: false,
+        })
+      toast.success(`已隐藏 ${toHide.length} 个,取消隐藏 ${toShow.length} 个`)
+    } catch (e) {
+      const err = e as {
+        response?: { data?: { error?: string } }
+        message?: string
+      }
+      toast.error(err.response?.data?.error || err.message || '保存失败')
+      throw e
+    } finally {
+      queryClient.invalidateQueries({ queryKey: ['nodes-hidden'] })
+    }
+  }
+
   const filteredNodes = useMemo(() => {
-    let nodes = displayNodes
+    let nodes = listNodes
 
     // 按协议筛选
     if (selectedProtocol !== 'all') {
@@ -3230,7 +3379,7 @@ function NodesPage() {
     }
 
     return nodes
-  }, [displayNodes, selectedProtocol, tagFilter])
+  }, [listNodes, selectedProtocol, tagFilter])
 
   const deferredFilteredNodes = useDeferredValue(filteredNodes)
 
@@ -3751,6 +3900,43 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           为订阅导入的节点设置标签，留空将使用服务器地址作为标签
                         </p>
                       </div>
+                      <div className='space-y-2'>
+                        <div className='flex items-center justify-between gap-2'>
+                          <Label
+                            htmlFor='subscription-name-prefix'
+                            className='text-sm font-medium'
+                          >
+                            节点名前缀
+                          </Label>
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='sm'
+                            className='h-7 px-2 text-xs'
+                            onClick={() => {
+                              const tag = subscriptionTag.trim()
+                              if (!tag) return
+                              nodeNamePrefixTouched.current = true
+                              setNodeNamePrefix(`〖${tag}〗`)
+                            }}
+                          >
+                            使用订阅名
+                          </Button>
+                        </div>
+                        <Input
+                          id='subscription-name-prefix'
+                          placeholder='默认 〖订阅名〗，留空则不加前缀'
+                          value={nodeNamePrefix}
+                          onChange={(e) => {
+                            nodeNamePrefixTouched.current = true
+                            setNodeNamePrefix(e.target.value)
+                          }}
+                          className='font-mono text-sm'
+                        />
+                        <p className='text-muted-foreground text-xs'>
+                          给节点名加前缀，例如〖机场A〗香港。
+                        </p>
+                      </div>
                       <div className='space-y-2 rounded-md border p-3'>
                         <div className='flex items-center justify-between gap-3'>
                           <div className='space-y-1'>
@@ -3969,6 +4155,20 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           }
                         >
                           关闭证书跳过 ({selectedNodeIds.size})
+                        </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => {
+                            if (realityCandidates.length === 0) {
+                              toast.info('选中的节点里没有 VLESS REALITY 节点')
+                              return
+                            }
+                            setRealityMlkemEnabled(true)
+                            setRealityOptionsDialogOpen(true)
+                          }}
+                        >
+                          REALITY 参数 ({realityCandidates.length})
                         </Button>
                         <Button
                           variant='outline'
@@ -4275,6 +4475,24 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           <ArrowUpDown className='mr-1 size-3.5' />
                           排序模式
                         </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => setHideDialogOpen(true)}
+                        >
+                          <EyeOff className='mr-1 size-3.5' />
+                          隐藏节点
+                        </Button>
+                        {hiddenCount > 0 && (
+                          <Button
+                            variant={showHiddenNodes ? 'default' : 'outline'}
+                            size='sm'
+                            onClick={() => setShowHiddenNodes((v) => !v)}
+                          >
+                            <Eye className='mr-1 size-3.5' />
+                            显示已隐藏 ({hiddenCount})
+                          </Button>
+                        )}
                         <Button
                           variant='outline'
                           size='sm'
@@ -4749,6 +4967,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           <Twemoji>
                                             {node.name || '未知'}
                                           </Twemoji>
+                                          {hiddenBadge(node)}
                                         </div>
                                       </>
                                     )}
@@ -5153,6 +5372,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                                 <Twemoji>
                                                   {node.name || '未知'}
                                                 </Twemoji>
+                                                {hiddenBadge(node)}
                                               </div>
                                             </>
                                           )}
@@ -5679,6 +5899,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                               {node.isSaved && (
                                                 <Check className='size-4 shrink-0 text-green-600' />
                                               )}
+                                              {hiddenBadge(node)}
                                             </div>
                                             {/* 服务器地址显示在节点名称下方 */}
                                             {node.parsed && (
@@ -6397,6 +6618,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           {node.isSaved && (
                                             <Check className='size-4 shrink-0 text-green-600' />
                                           )}
+                                          {hiddenBadge(node)}
                                           <Button
                                             variant='ghost'
                                             size='icon'
@@ -6969,6 +7191,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                             {node.isSaved && (
                                               <Check className='size-4 shrink-0 text-green-600' />
                                             )}
+                                            {hiddenBadge(node)}
                                             <Button
                                               variant='ghost'
                                               size='icon'
@@ -7865,6 +8088,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           {node.isSaved && (
                                             <Check className='size-4 shrink-0 text-green-600' />
                                           )}
+                                          {hiddenBadge(node)}
                                           <Button
                                             variant='ghost'
                                             size='icon'
@@ -9195,6 +9419,84 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
         </DialogContent>
       </Dialog>
 
+      {/* VLESS REALITY 节点参数批量配置 */}
+      <Dialog
+        open={realityOptionsDialogOpen}
+        onOpenChange={setRealityOptionsDialogOpen}
+      >
+        <DialogContent className='flex max-h-[85vh] max-w-2xl flex-col'>
+          <DialogHeader>
+            <DialogTitle>VLESS REALITY 参数配置</DialogTitle>
+            <DialogDescription>
+              批量修改 VLESS REALITY
+              节点的客户端参数。仅影响订阅里的客户端配置，服务端不需要改。
+            </DialogDescription>
+          </DialogHeader>
+          <div className='flex items-center justify-between gap-3 rounded-lg border p-3'>
+            <div>
+              <Label htmlFor='reality-mlkem-switch'>
+                X25519MLKEM768 后量子密钥交换
+              </Label>
+              <p className='text-muted-foreground text-xs'>
+                客户端开启 X25519MLKEM768 后量子密钥交换（mihomo
+                reality-opts.support-x25519mlkem768）。关闭时删除该参数
+              </p>
+            </div>
+            <Switch
+              id='reality-mlkem-switch'
+              checked={realityMlkemEnabled}
+              onCheckedChange={setRealityMlkemEnabled}
+            />
+          </div>
+          <div className='min-h-0 flex-1 space-y-1 overflow-y-auto rounded-lg border p-2'>
+            {realityCandidates.map((node) => {
+              let mlkem = false
+              try {
+                mlkem =
+                  JSON.parse(node.clash_config)?.['reality-opts']?.[
+                    'support-x25519mlkem768'
+                  ] === true
+              } catch {
+                // 候选已按可解析过滤,这里只做兜底
+              }
+              return (
+                <div
+                  key={node.id}
+                  className='flex items-center gap-3 rounded-md px-2 py-2'
+                >
+                  <span className='min-w-0 flex-1 truncate text-sm'>
+                    {node.node_name}
+                  </span>
+                  <span className='text-muted-foreground shrink-0 text-xs'>
+                    MLKEM {mlkem ? '已开启' : '未开启'}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <DialogFooter>
+            <Button
+              variant='outline'
+              onClick={() => setRealityOptionsDialogOpen(false)}
+              disabled={updateRealityOptionsMutation.isPending}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => updateRealityOptionsMutation.mutate()}
+              disabled={
+                updateRealityOptionsMutation.isPending ||
+                realityCandidates.length === 0
+              }
+            >
+              {updateRealityOptionsMutation.isPending
+                ? '保存中...'
+                : `保存 ${realityCandidates.length} 个节点`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* 批量修改名称对话框 */}
       <Dialog
         open={batchRenameDialogOpen}
@@ -9701,6 +10003,21 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
       </Dialog>
 
       <NodeProbeDialog open={nodeProbeOpen} onOpenChange={setNodeProbeOpen} />
+      <HideNodesDialog
+        open={hideDialogOpen}
+        onOpenChange={setHideDialogOpen}
+        hiddenIds={hiddenNodeIds}
+        onSave={saveHiddenNodes}
+        nodes={displayNodes
+          .filter((n) => n.isSaved && n.dbId)
+          .map((n) => ({
+            id: n.dbId!,
+            name: n.name || '',
+            protocol: n.parsed?.type || n.dbNode?.protocol || '',
+            group: (n.dbNode?.tags?.length ? n.dbNode.tags[0] : n.tag) || '',
+            server: n.parsed?.server || '',
+          }))}
+      />
       {/* 节点测速 */}
       <SpeedTestDialog
         open={speedDialogOpen && !speedDialogMin}

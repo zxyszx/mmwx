@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"miaomiaowu/internal/logger"
 	"os"
 	"path/filepath"
@@ -32,6 +33,23 @@ func proxyKeysChanged(proxyNode *yaml.Node, newConfig map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// withExistingDialerProxy 保留订阅文件中已有的 dialer-proxy。
+// dialer-proxy 由保存订阅时根据代理组中转配置写入，数据库中的节点配置不含该字段，
+// 同步节点时若直接用数据库配置替换会把中转关系冲掉。返回副本，不修改 newConfig。
+func withExistingDialerProxy(proxyNode *yaml.Node, newConfig map[string]any) map[string]any {
+	if _, ok := newConfig["dialer-proxy"]; ok {
+		return newConfig
+	}
+	dialerProxy := yamlMapGet(proxyNode, "dialer-proxy")
+	if dialerProxy == "" {
+		return newConfig
+	}
+	merged := make(map[string]any, len(newConfig)+1)
+	maps.Copy(merged, newConfig)
+	merged["dialer-proxy"] = dialerProxy
+	return merged
 }
 
 // updateProxyNodeFields updates an existing proxy node with new field values while preserving original node styles
@@ -501,12 +519,13 @@ func syncNodeToYAMLFiles(subscribeDir, oldNodeName, newNodeName string, clashCon
 
 								// If this proxy matches the one being updated
 								if proxyName == oldNodeName {
-									if nameChanged || proxyKeysChanged(proxyNode, newClashConfig) {
+									proxyConfig := withExistingDialerProxy(proxyNode, newClashConfig)
+									if nameChanged || proxyKeysChanged(proxyNode, proxyConfig) {
 										// Replace entire proxy node with new config
-										proxiesNode.Content[j] = util.ReorderProxyFieldsToNode(newClashConfig)
+										proxiesNode.Content[j] = util.ReorderProxyFieldsToNode(proxyConfig)
 									} else {
 										// Update fields in-place, preserving original node styles
-										updateProxyNodeFields(proxyNode, newClashConfig)
+										updateProxyNodeFields(proxyNode, proxyConfig)
 										// Reorder fields to put priority fields first
 										reorderProxyNodeFieldsInPlace(proxyNode)
 									}
@@ -693,12 +712,13 @@ func batchSyncNodesToYAMLFiles(subscribeDir string, updates []NodeUpdate) error 
 								// 检查是否需要更新此节点
 								if update, exists := updateMap[proxyName]; exists {
 									nameChanged := update.oldName != update.newName
-									if nameChanged || proxyKeysChanged(proxyNode, update.clashConfig) {
+									proxyConfig := withExistingDialerProxy(proxyNode, update.clashConfig)
+									if nameChanged || proxyKeysChanged(proxyNode, proxyConfig) {
 										// 名称改变或属性增删：替换整个节点
-										proxiesNode.Content[j] = util.ReorderProxyFieldsToNode(update.clashConfig)
+										proxiesNode.Content[j] = util.ReorderProxyFieldsToNode(proxyConfig)
 									} else {
 										// 仅值变化：就地更新字段
-										updateProxyNodeFields(proxyNode, update.clashConfig)
+										updateProxyNodeFields(proxyNode, proxyConfig)
 										reorderProxyNodeFieldsInPlace(proxyNode)
 									}
 									modified = true

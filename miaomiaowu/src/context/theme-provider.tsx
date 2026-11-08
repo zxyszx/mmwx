@@ -38,10 +38,9 @@ export function ThemeProvider({
   storageKey = THEME_COOKIE_NAME,
   ...props
 }: ThemeProviderProps) {
-  const [theme, _setTheme] = useState<Theme>(() => {
-    const storedTheme = window.localStorage.getItem(storageKey) as Theme | null
-    return storedTheme || (getCookie(storageKey) as Theme) || defaultTheme
-  })
+  const [theme, _setTheme] = useState<Theme>(
+    () => (getCookie(storageKey) as Theme) || defaultTheme
+  )
 
   // Optimized: Memoize the resolved theme calculation to prevent unnecessary re-computations
   const resolvedTheme = useMemo((): ResolvedTheme => {
@@ -77,13 +76,11 @@ export function ThemeProvider({
   }, [theme, resolvedTheme])
 
   const setTheme = (theme: Theme) => {
-    window.localStorage.setItem(storageKey, theme)
     setCookie(storageKey, theme, THEME_COOKIE_MAX_AGE)
     _setTheme(theme)
   }
 
   const resetTheme = () => {
-    window.localStorage.removeItem(storageKey)
     removeCookie(storageKey)
     _setTheme(DEFAULT_THEME)
   }

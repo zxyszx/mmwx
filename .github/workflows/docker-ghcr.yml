@@ -6,11 +6,11 @@ on:
       platforms:
         description: "Target platforms"
         required: true
-        default: "linux/amd64"
+        default: "linux/amd64,linux/arm64"
         type: choice
         options:
-          - linux/amd64
           - linux/amd64,linux/arm64
+          - linux/amd64
 
 concurrency:
   group: docker-ghcr-${{ github.ref }}
@@ -37,15 +37,14 @@ jobs:
           echo "IMAGE_NAME=${IMAGE_NAME}" >> "$GITHUB_ENV"
           echo "Image: ${IMAGE_NAME}"
 
+      # main 分支推送也构建 arm64,否则 latest 标签会被覆盖成仅 amd64 (GitHub issue #122)
       - name: Set platforms
         id: platforms
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PLATFORMS="${{ inputs.platforms }}"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            PLATFORMS="linux/amd64,linux/arm64"
           else
-            PLATFORMS="linux/amd64"
+            PLATFORMS="linux/amd64,linux/arm64"
           fi
           echo "value=${PLATFORMS}" >> "$GITHUB_OUTPUT"
           echo "Platforms: ${PLATFORMS}"

@@ -18,12 +18,14 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -31,7 +33,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Tooltip,
@@ -39,7 +40,12 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { NodeProbePanel } from '@/components/node-probe-dialog'
+import { AutoBackupCard } from '@/components/system-settings/auto-backup-card'
+import { NavMenuCard } from '@/components/system-settings/nav-menu-card'
+import { NotifyChannelsCard } from '@/components/system-settings/notify-channels-card'
 import { PanelWallpaperCard } from '@/components/system-settings/panel-wallpaper-card'
+import { CACertNoPinCard } from '@/components/system-settings/ca-cert-no-pin-card'
+import { PWASettingCard } from '@/components/system-settings/pwa-setting-card'
 
 // 系统设置分选项卡:订阅同步 / 功能 / 安全 / 高级 / 节点探测 / 外观(参照妙妙屋X)
 const SETTINGS_TABS = [
@@ -403,7 +409,7 @@ function SystemSettingsPage() {
 
   return (
     <div className='bg-background min-h-svh'>
-      <main className='mx-auto w-full max-w-[1600px] px-3 pt-20 pb-8 sm:px-4 lg:px-5'>
+      <main className='mx-auto w-full max-w-4xl px-4 py-8 pt-24 sm:px-6'>
         <section className='space-y-2'>
           <h1 className='text-3xl font-semibold tracking-tight'>系统设置</h1>
           <p className='text-muted-foreground'>管理订阅同步和功能开关</p>
@@ -439,1121 +445,1241 @@ function SystemSettingsPage() {
           </TabsList>
 
           <TabsContent value='sub' className='space-y-6'>
-            {/* 外部订阅同步设置 */}
-            <Card>
-              <CardHeader className='pb-4'>
-                <CardTitle>外部订阅同步设置</CardTitle>
-                <CardDescription>配置外部订阅的同步行为</CardDescription>
-              </CardHeader>
-              <CardContent className='space-y-4'>
-                <div className='flex items-center justify-between'>
-                  <div className='flex items-center gap-2'>
-                    <Label htmlFor='sync-traffic' className='cursor-pointer'>
-                      同步外部订阅流量信息
-                    </Label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                      </TooltipTrigger>
-                      <TooltipContent side='right' className='max-w-xs'>
-                        <p>开启后，流量信息数据包含外部订阅的流量信息</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <Switch
-                    id='sync-traffic'
-                    checked={syncTraffic}
-                    onCheckedChange={(checked) =>
-                      updateConfig({ sync_traffic: checked })
-                    }
-                    disabled={loadingConfig || updateConfigMutation.isPending}
-                  />
+          {/* 外部订阅同步设置 */}
+          <Card>
+            <CardHeader className='pb-4'>
+              <CardTitle>外部订阅同步设置</CardTitle>
+              <CardDescription>配置外部订阅的同步行为</CardDescription>
+            </CardHeader>
+            <CardContent className='space-y-4'>
+              <div className='flex items-center justify-between'>
+                <div className='flex items-center gap-2'>
+                  <Label htmlFor='sync-traffic' className='cursor-pointer'>
+                    同步外部订阅流量信息
+                  </Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                    </TooltipTrigger>
+                    <TooltipContent side='right' className='max-w-xs'>
+                      <p>开启后，流量信息数据包含外部订阅的流量信息</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
+                <Switch
+                  id='sync-traffic'
+                  checked={syncTraffic}
+                  onCheckedChange={(checked) =>
+                    updateConfig({ sync_traffic: checked })
+                  }
+                  disabled={loadingConfig || updateConfigMutation.isPending}
+                />
+              </div>
 
-                <div className='flex items-center justify-between'>
-                  <div className='flex items-center gap-2'>
-                    <Label htmlFor='append-sub-info' className='cursor-pointer'>
-                      节点名称追加订阅信息
-                    </Label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                      </TooltipTrigger>
-                      <TooltipContent side='right' className='max-w-xs'>
-                        <p>
-                          开启后，同步外部订阅时在节点名称后追加剩余流量和剩余天数，例如：节点名
-                          398.22GB📊 26Days⏳
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <Switch
-                    id='append-sub-info'
-                    checked={appendSubInfo}
-                    onCheckedChange={(checked) =>
-                      updateConfig({ append_sub_info: checked })
-                    }
-                    disabled={loadingConfig || updateConfigMutation.isPending}
-                  />
+              <div className='flex items-center justify-between'>
+                <div className='flex items-center gap-2'>
+                  <Label htmlFor='append-sub-info' className='cursor-pointer'>
+                    节点名称追加订阅信息
+                  </Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                    </TooltipTrigger>
+                    <TooltipContent side='right' className='max-w-xs'>
+                      <p>
+                        开启后，同步外部订阅时在节点名称后追加剩余流量和剩余天数，例如：节点名
+                        398.22GB📊 26Days⏳
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
+                <Switch
+                  id='append-sub-info'
+                  checked={appendSubInfo}
+                  onCheckedChange={(checked) =>
+                    updateConfig({ append_sub_info: checked })
+                  }
+                  disabled={loadingConfig || updateConfigMutation.isPending}
+                />
+              </div>
 
-                <div className='space-y-2 border-t pt-3'>
-                  <div className='flex items-center gap-2'>
-                    <Label htmlFor='node-name-filter'>节点名称过滤</Label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                      </TooltipTrigger>
-                      <TooltipContent side='right' className='max-w-xs'>
-                        <p>
-                          使用正则表达式过滤节点名称，匹配的节点将被排除。留空则不过滤。
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <Input
-                    id='node-name-filter'
-                    value={nodeNameFilter}
-                    onChange={(e) => setNodeNameFilter(e.target.value)}
-                    onBlur={() =>
-                      updateConfig({ node_name_filter: nodeNameFilter })
-                    }
-                    disabled={loadingConfig || updateConfigMutation.isPending}
-                    placeholder='剩余|流量|到期|订阅|时间|重置'
-                  />
-                  <p className='text-muted-foreground text-xs'>
-                    正则表达式，匹配的节点将在同步时被过滤掉
-                  </p>
+              <div className='space-y-2 border-t pt-3'>
+                <div className='flex items-center gap-2'>
+                  <Label htmlFor='node-name-filter'>节点名称过滤</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                    </TooltipTrigger>
+                    <TooltipContent side='right' className='max-w-xs'>
+                      <p>
+                        使用正则表达式过滤节点名称，匹配的节点将被排除。留空则不过滤。
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
+                <Input
+                  id='node-name-filter'
+                  value={nodeNameFilter}
+                  onChange={(e) => setNodeNameFilter(e.target.value)}
+                  onBlur={() =>
+                    updateConfig({ node_name_filter: nodeNameFilter })
+                  }
+                  disabled={loadingConfig || updateConfigMutation.isPending}
+                  placeholder='剩余|流量|到期|订阅|时间|重置'
+                />
+                <p className='text-muted-foreground text-xs'>
+                  正则表达式，匹配的节点将在同步时被过滤掉
+                </p>
+              </div>
 
-                <div className='flex items-center justify-between border-t pt-3'>
+              <div className='flex items-center justify-between border-t pt-3'>
+                <div className='flex items-center gap-2'>
+                  <Label
+                    htmlFor='force-sync-external'
+                    className='cursor-pointer'
+                  >
+                    外部订阅同步设置
+                  </Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                    </TooltipTrigger>
+                    <TooltipContent side='right' className='max-w-xs'>
+                      <p>
+                        开启后，从订阅链接获取订阅时将重新获取外部订阅链接的最新节点
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Switch
+                  id='force-sync-external'
+                  checked={forceSyncExternal}
+                  onCheckedChange={(checked) =>
+                    updateConfig({ force_sync_external: checked })
+                  }
+                  disabled={loadingConfig || updateConfigMutation.isPending}
+                />
+              </div>
+
+              {forceSyncExternal && (
+                <div className='bg-muted/30 -mx-6 space-y-4 rounded-b-lg border-t px-6 py-4 pt-3'>
+                  <div className='space-y-2'>
+                    <Label>匹配规则</Label>
+                    <RadioGroup
+                      value={matchRule}
+                      onValueChange={(
+                        value:
+                          | 'node_name'
+                          | 'server_port'
+                          | 'type_server_port'
+                          | 'type_server_port_cred'
+                      ) => {
+                        setMatchRule(value)
+                        updateConfig({ match_rule: value })
+                      }}
+                      disabled={loadingConfig || updateConfigMutation.isPending}
+                      className='flex flex-wrap gap-4'
+                    >
+                      <div className='flex items-center space-x-2'>
+                        <RadioGroupItem
+                          value='node_name'
+                          id='match-node-name'
+                        />
+                        <Label
+                          htmlFor='match-node-name'
+                          className='cursor-pointer font-normal'
+                        >
+                          节点名称
+                        </Label>
+                      </div>
+                      <div className='flex items-center space-x-2'>
+                        <RadioGroupItem
+                          value='server_port'
+                          id='match-server-port'
+                        />
+                        <Label
+                          htmlFor='match-server-port'
+                          className='cursor-pointer font-normal'
+                        >
+                          服务器:端口
+                        </Label>
+                      </div>
+                      <div className='flex items-center space-x-2'>
+                        <RadioGroupItem
+                          value='type_server_port'
+                          id='match-type-server-port'
+                        />
+                        <Label
+                          htmlFor='match-type-server-port'
+                          className='cursor-pointer font-normal'
+                        >
+                          类型:服务器:端口
+                        </Label>
+                      </div>
+                      <div className='flex items-center space-x-2'>
+                        <RadioGroupItem
+                          value='type_server_port_cred'
+                          id='match-type-server-port-cred'
+                        />
+                        <Label
+                          htmlFor='match-type-server-port-cred'
+                          className='cursor-pointer font-normal'
+                        >
+                          类型:服务器:端口:凭据
+                        </Label>
+                      </div>
+                    </RadioGroup>
+                  </div>
+
+                  <div className='border-border/50 space-y-2 border-t pt-3'>
+                    <Label>同步范围</Label>
+                    <RadioGroup
+                      value={syncScope}
+                      onValueChange={(value: 'saved_only' | 'all') => {
+                        setSyncScope(value)
+                        updateConfig({ sync_scope: value })
+                      }}
+                      disabled={loadingConfig || updateConfigMutation.isPending}
+                      className='flex flex-wrap gap-4'
+                    >
+                      <div className='flex items-center space-x-2'>
+                        <RadioGroupItem
+                          value='saved_only'
+                          id='sync-saved-only'
+                        />
+                        <Label
+                          htmlFor='sync-saved-only'
+                          className='cursor-pointer font-normal'
+                        >
+                          仅同步已保存节点
+                        </Label>
+                      </div>
+                      <div className='flex items-center space-x-2'>
+                        <RadioGroupItem value='all' id='sync-all' />
+                        <Label
+                          htmlFor='sync-all'
+                          className='cursor-pointer font-normal'
+                        >
+                          同步所有节点
+                        </Label>
+                      </div>
+                    </RadioGroup>
+                  </div>
+
+                  <div className='border-border/50 flex items-center justify-between border-t pt-3'>
+                    <div className='flex items-center gap-2'>
+                      <Label
+                        htmlFor='keep-node-name'
+                        className='cursor-pointer'
+                      >
+                        保留当前节点名称
+                      </Label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                        </TooltipTrigger>
+                        <TooltipContent side='right' className='max-w-xs'>
+                          <p>
+                            开启后，同步时保留数据库中的节点名称，不使用外部订阅的节点名称
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <Switch
+                      id='keep-node-name'
+                      checked={keepNodeName}
+                      onCheckedChange={(checked) => {
+                        setKeepNodeName(checked)
+                        updateConfig({ keep_node_name: checked })
+                      }}
+                      disabled={loadingConfig || updateConfigMutation.isPending}
+                    />
+                  </div>
+
+                  <div className='border-border/50 space-y-2 border-t pt-3'>
+                    <div className='flex items-center gap-2'>
+                      <Label htmlFor='cache-expire-minutes'>
+                        缓存过期时间（分钟）
+                      </Label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                        </TooltipTrigger>
+                        <TooltipContent side='right' className='max-w-xs'>
+                          <p>
+                            设置为0表示每次获取订阅时都重新拉取。大于0时，只有超过设置的分钟数才会重新拉取
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <Input
+                      id='cache-expire-minutes'
+                      type='number'
+                      min='0'
+                      value={cacheExpireMinutes}
+                      onChange={(e) =>
+                        setCacheExpireMinutes(parseInt(e.target.value) || 0)
+                      }
+                      onBlur={() =>
+                        updateConfig({
+                          cache_expire_minutes: cacheExpireMinutes,
+                        })
+                      }
+                      disabled={loadingConfig || updateConfigMutation.isPending}
+                      placeholder='0'
+                      className='w-32'
+                    />
+                    <p className='text-destructive text-xs'>
+                      注意：每次都更新订阅会影响获取订阅接口的响应速度
+                    </p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 正规 CA 证书节点不固定证书指纹(从妙妙屋X 移植) */}
+          <CACertNoPinCard />
+
+          </TabsContent>
+
+          <TabsContent value='features' className='space-y-6'>
+          {/* 功能开关 */}
+          <Card>
+            <CardHeader className='pb-4'>
+              <CardTitle>功能开关</CardTitle>
+              <CardDescription>管理系统功能的启用状态</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+                {/* 节点探针服务器绑定 */}
+                <div className='flex items-center justify-between rounded-lg border p-3'>
                   <div className='flex items-center gap-2'>
                     <Label
-                      htmlFor='force-sync-external'
+                      htmlFor='enable-probe-binding'
                       className='cursor-pointer'
                     >
-                      外部订阅同步设置
+                      探针服务器绑定
                     </Label>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
                       </TooltipTrigger>
-                      <TooltipContent side='right' className='max-w-xs'>
+                      <TooltipContent side='top' className='max-w-xs'>
                         <p>
-                          开启后，从订阅链接获取订阅时将重新获取外部订阅链接的最新节点
+                          开启后，节点列表将显示探针按钮，可为节点绑定特定的探针服务器。流量统计将只汇总绑定节点的探针流量。
                         </p>
                       </TooltipContent>
                     </Tooltip>
                   </div>
                   <Switch
-                    id='force-sync-external'
-                    checked={forceSyncExternal}
+                    id='enable-probe-binding'
+                    checked={enableProbeBinding}
                     onCheckedChange={(checked) =>
-                      updateConfig({ force_sync_external: checked })
+                      updateConfig({ enable_probe_binding: checked })
                     }
                     disabled={loadingConfig || updateConfigMutation.isPending}
                   />
                 </div>
 
-                {forceSyncExternal && (
-                  <div className='bg-muted/30 -mx-6 space-y-4 rounded-b-lg border-t px-6 py-4 pt-3'>
-                    <div className='space-y-2'>
-                      <Label>匹配规则</Label>
-                      <RadioGroup
-                        value={matchRule}
-                        onValueChange={(
-                          value:
-                            | 'node_name'
-                            | 'server_port'
-                            | 'type_server_port'
-                            | 'type_server_port_cred'
-                        ) => {
-                          setMatchRule(value)
-                          updateConfig({ match_rule: value })
-                        }}
+                {/* 短链接 */}
+                <div className='flex items-center justify-between rounded-lg border p-3'>
+                  <div className='flex items-center gap-2'>
+                    <Label
+                      htmlFor='enable-short-link'
+                      className='cursor-pointer'
+                    >
+                      启用短链接
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          开启后，订阅链接页面将显示6位字符的短链接。可在个人设置页面重置短链接。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='enable-short-link'
+                    checked={enableShortLink}
+                    onCheckedChange={(checked) =>
+                      updateConfig({ enable_short_link: checked })
+                    }
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+
+                {/* 模板版本选择 */}
+                <div className='rounded-lg border p-3'>
+                  <div className='mb-3 flex items-center gap-2'>
+                    <Label className='font-medium'>模板版本</Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>v1：使用 rule_templates 目录下的文件模板</p>
+                        <p>v2：使用数据库模板（通用后端，支持网页端管理）</p>
+                        <p>
+                          v3：使用新版模板系统（类 mihomo 配置，支持可视化编辑）
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <div className='flex gap-2'>
+                    {[
+                      { value: 'v1', label: '旧 (v1)' },
+                      { value: 'v2', label: '通用后端 (v2)' },
+                      { value: 'v3', label: '新 (v3)' },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type='button'
+                        onClick={() =>
+                          updateConfig({ template_version: option.value })
+                        }
                         disabled={
                           loadingConfig || updateConfigMutation.isPending
                         }
-                        className='flex flex-wrap gap-4'
+                        className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                          templateVersion === option.value
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-background hover:bg-muted border-border'
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
                       >
-                        <div className='flex items-center space-x-2'>
-                          <RadioGroupItem
-                            value='node_name'
-                            id='match-node-name'
-                          />
-                          <Label
-                            htmlFor='match-node-name'
-                            className='cursor-pointer font-normal'
-                          >
-                            节点名称
-                          </Label>
-                        </div>
-                        <div className='flex items-center space-x-2'>
-                          <RadioGroupItem
-                            value='server_port'
-                            id='match-server-port'
-                          />
-                          <Label
-                            htmlFor='match-server-port'
-                            className='cursor-pointer font-normal'
-                          >
-                            服务器:端口
-                          </Label>
-                        </div>
-                        <div className='flex items-center space-x-2'>
-                          <RadioGroupItem
-                            value='type_server_port'
-                            id='match-type-server-port'
-                          />
-                          <Label
-                            htmlFor='match-type-server-port'
-                            className='cursor-pointer font-normal'
-                          >
-                            类型:服务器:端口
-                          </Label>
-                        </div>
-                        <div className='flex items-center space-x-2'>
-                          <RadioGroupItem
-                            value='type_server_port_cred'
-                            id='match-type-server-port-cred'
-                          />
-                          <Label
-                            htmlFor='match-type-server-port-cred'
-                            className='cursor-pointer font-normal'
-                          >
-                            类型:服务器:端口:凭据
-                          </Label>
-                        </div>
-                      </RadioGroup>
-                    </div>
-
-                    <div className='border-border/50 space-y-2 border-t pt-3'>
-                      <Label>同步范围</Label>
-                      <RadioGroup
-                        value={syncScope}
-                        onValueChange={(value: 'saved_only' | 'all') => {
-                          setSyncScope(value)
-                          updateConfig({ sync_scope: value })
-                        }}
-                        disabled={
-                          loadingConfig || updateConfigMutation.isPending
-                        }
-                        className='flex flex-wrap gap-4'
-                      >
-                        <div className='flex items-center space-x-2'>
-                          <RadioGroupItem
-                            value='saved_only'
-                            id='sync-saved-only'
-                          />
-                          <Label
-                            htmlFor='sync-saved-only'
-                            className='cursor-pointer font-normal'
-                          >
-                            仅同步已保存节点
-                          </Label>
-                        </div>
-                        <div className='flex items-center space-x-2'>
-                          <RadioGroupItem value='all' id='sync-all' />
-                          <Label
-                            htmlFor='sync-all'
-                            className='cursor-pointer font-normal'
-                          >
-                            同步所有节点
-                          </Label>
-                        </div>
-                      </RadioGroup>
-                    </div>
-
-                    <div className='border-border/50 flex items-center justify-between border-t pt-3'>
-                      <div className='flex items-center gap-2'>
-                        <Label
-                          htmlFor='keep-node-name'
-                          className='cursor-pointer'
+                        <span
+                          className={`flex h-3 w-3 items-center justify-center rounded-full border-2 ${
+                            templateVersion === option.value
+                              ? 'border-primary-foreground'
+                              : 'border-muted-foreground'
+                          }`}
                         >
-                          保留当前节点名称
-                        </Label>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                          </TooltipTrigger>
-                          <TooltipContent side='right' className='max-w-xs'>
-                            <p>
-                              开启后，同步时保留数据库中的节点名称，不使用外部订阅的节点名称
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-                      <Switch
-                        id='keep-node-name'
-                        checked={keepNodeName}
-                        onCheckedChange={(checked) => {
-                          setKeepNodeName(checked)
-                          updateConfig({ keep_node_name: checked })
-                        }}
-                        disabled={
-                          loadingConfig || updateConfigMutation.isPending
-                        }
-                      />
-                    </div>
+                          {templateVersion === option.value && (
+                            <span className='bg-primary-foreground h-1.5 w-1.5 rounded-full' />
+                          )}
+                        </span>
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-                    <div className='border-border/50 space-y-2 border-t pt-3'>
-                      <div className='flex items-center gap-2'>
-                        <Label htmlFor='cache-expire-minutes'>
-                          缓存过期时间（分钟）
-                        </Label>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                          </TooltipTrigger>
-                          <TooltipContent side='right' className='max-w-xs'>
-                            <p>
-                              设置为0表示每次获取订阅时都重新拉取。大于0时，只有超过设置的分钟数才会重新拉取
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-                      <Input
-                        id='cache-expire-minutes'
-                        type='number'
-                        min='0'
-                        value={cacheExpireMinutes}
-                        onChange={(e) =>
-                          setCacheExpireMinutes(parseInt(e.target.value) || 0)
-                        }
-                        onBlur={() =>
+                {/* 代理集合 */}
+                <div className='flex items-center justify-between rounded-lg border p-3'>
+                  <div className='flex items-center gap-2'>
+                    <Label
+                      htmlFor='enable-proxy-provider'
+                      className='cursor-pointer'
+                    >
+                      启用代理集合
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          代理集合（Proxy
+                          Provider）允许从外部订阅动态加载节点。开启后可在订阅文件页面配置代理集合，并在编辑代理组时将代理集合拖入代理组。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='enable-proxy-provider'
+                    checked={enableProxyProvider}
+                    onCheckedChange={(checked) =>
+                      updateConfig({ enable_proxy_provider: checked })
+                    }
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+
+                {/* 客户端兼容模式 */}
+                <div className='flex items-center justify-between rounded-lg border p-3'>
+                  <div className='flex items-center gap-2'>
+                    <Label
+                      htmlFor='client-compatibility-mode'
+                      className='cursor-pointer'
+                    >
+                      客户端兼容模式
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          自动过滤不兼容的节点（如
+                          WireGuard），仅记录日志不报错。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='client-compatibility-mode'
+                    checked={clientCompatibilityMode}
+                    onCheckedChange={(checked) =>
+                      updateConfig({ client_compatibility_mode: checked })
+                    }
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+
+                {/* 覆写脚本 */}
+                <div className='flex items-center justify-between rounded-lg border p-3'>
+                  <div className='flex items-center gap-2'>
+                    <Label
+                      htmlFor='enable-override-scripts'
+                      className='cursor-pointer'
+                    >
+                      覆写脚本
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          开启后，覆写管理页面将显示覆写脚本功能，可使用
+                          JavaScript 脚本修改订阅配置或节点属性。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='enable-override-scripts'
+                    checked={enableOverrideScripts}
+                    onCheckedChange={(checked) =>
+                      updateConfig({ enable_override_scripts: checked })
+                    }
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+
+                {/* 通知推送 */}
+                <div className='flex items-center justify-between rounded-lg border p-3'>
+                  <div className='flex items-center gap-2'>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant='outline'
+                          size='icon'
+                          className='h-7 w-7'
+                        >
+                          <Settings className='h-3.5 w-3.5' />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        className='w-80'
+                        side='bottom'
+                        align='start'
+                      >
+                        <div className='space-y-4'>
+                          <div className='space-y-2'>
+                            <Label htmlFor='telegram-bot-token'>
+                              Bot Token
+                            </Label>
+                            <Input
+                              id='telegram-bot-token'
+                              value={notifyConfig.telegram_bot_token}
+                              onChange={(e) =>
+                                setNotifyConfig({
+                                  ...notifyConfig,
+                                  telegram_bot_token: e.target.value,
+                                })
+                              }
+                              onBlur={() =>
+                                saveNotifyConfig({
+                                  telegram_bot_token:
+                                    notifyConfig.telegram_bot_token,
+                                })
+                              }
+                              placeholder='123456:ABC-DEF...'
+                            />
+                          </div>
+                          <div className='space-y-2'>
+                            <Label htmlFor='telegram-chat-id'>Chat ID</Label>
+                            <Input
+                              id='telegram-chat-id'
+                              value={notifyConfig.telegram_chat_id}
+                              onChange={(e) =>
+                                setNotifyConfig({
+                                  ...notifyConfig,
+                                  telegram_chat_id: e.target.value,
+                                })
+                              }
+                              onBlur={() =>
+                                saveNotifyConfig({
+                                  telegram_chat_id:
+                                    notifyConfig.telegram_chat_id,
+                                })
+                              }
+                              placeholder='-1001234567890'
+                            />
+                          </div>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            className='w-full'
+                            onClick={() => testNotifyMutation.mutate()}
+                            disabled={
+                              testNotifyMutation.isPending ||
+                              !notifyConfig.telegram_bot_token ||
+                              !notifyConfig.telegram_chat_id
+                            }
+                          >
+                            {testNotifyMutation.isPending
+                              ? '发送中...'
+                              : '发送测试通知'}
+                          </Button>
+                          <div className='space-y-2 border-t pt-3'>
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='notify-subscribe-fetch'
+                                checked={notifyConfig.notify_subscribe_fetch}
+                                onCheckedChange={(checked) =>
+                                  saveNotifyConfig({
+                                    notify_subscribe_fetch: checked === true,
+                                  })
+                                }
+                              />
+                              <Label
+                                htmlFor='notify-subscribe-fetch'
+                                className='cursor-pointer text-sm'
+                              >
+                                订阅获取通知
+                              </Label>
+                            </div>
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='notify-login'
+                                checked={notifyConfig.notify_login}
+                                onCheckedChange={(checked) =>
+                                  saveNotifyConfig({
+                                    notify_login: checked === true,
+                                  })
+                                }
+                              />
+                              <Label
+                                htmlFor='notify-login'
+                                className='cursor-pointer text-sm'
+                              >
+                                登录通知
+                              </Label>
+                            </div>
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='notify-ip-ban'
+                                checked={notifyConfig.notify_ip_ban}
+                                onCheckedChange={(checked) =>
+                                  saveNotifyConfig({
+                                    notify_ip_ban: checked === true,
+                                  })
+                                }
+                              />
+                              <Label
+                                htmlFor='notify-ip-ban'
+                                className='cursor-pointer text-sm'
+                              >
+                                IP 封禁通知
+                              </Label>
+                            </div>
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='notify-silent-mode'
+                                checked={notifyConfig.notify_silent_mode}
+                                onCheckedChange={(checked) =>
+                                  saveNotifyConfig({
+                                    notify_silent_mode: checked === true,
+                                  })
+                                }
+                              />
+                              <Label
+                                htmlFor='notify-silent-mode'
+                                className='cursor-pointer text-sm'
+                              >
+                                静默模式通知
+                              </Label>
+                            </div>
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='notify-expiry'
+                                checked={notifyConfig.notify_expiry}
+                                onCheckedChange={(checked) =>
+                                  saveNotifyConfig({
+                                    notify_expiry: checked === true,
+                                  })
+                                }
+                              />
+                              <Label
+                                htmlFor='notify-expiry'
+                                className='cursor-pointer text-sm'
+                              >
+                                订阅到期通知
+                              </Label>
+                            </div>
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='notify-daily-traffic'
+                                checked={notifyConfig.notify_daily_traffic}
+                                onCheckedChange={(checked) =>
+                                  saveNotifyConfig({
+                                    notify_daily_traffic: checked === true,
+                                  })
+                                }
+                              />
+                              <Label
+                                htmlFor='notify-daily-traffic'
+                                className='cursor-pointer text-sm'
+                              >
+                                每日流量通知
+                              </Label>
+                              {notifyConfig.notify_daily_traffic && (
+                                <Input
+                                  type='time'
+                                  value={notifyConfig.notify_daily_traffic_time}
+                                  onChange={(e) =>
+                                    setNotifyConfig({
+                                      ...notifyConfig,
+                                      notify_daily_traffic_time: e.target.value,
+                                    })
+                                  }
+                                  onBlur={() =>
+                                    saveNotifyConfig({
+                                      notify_daily_traffic_time:
+                                        notifyConfig.notify_daily_traffic_time,
+                                    })
+                                  }
+                                  className='h-7 w-24 text-xs'
+                                />
+                              )}
+                            </div>
+                            {/* 节点探测上下线:探测判定节点连不上/恢复时推送 */}
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='notify-node-probe-offline'
+                                checked={notifyConfig.notify_node_probe_offline}
+                                onCheckedChange={(checked) =>
+                                  saveNotifyConfig({
+                                    notify_node_probe_offline: checked === true,
+                                  })
+                                }
+                              />
+                              <Label
+                                htmlFor='notify-node-probe-offline'
+                                className='cursor-pointer text-sm'
+                              >
+                                节点探测离线
+                              </Label>
+                            </div>
+                            <div className='flex items-center gap-2'>
+                              <Checkbox
+                                id='notify-node-probe-online'
+                                checked={notifyConfig.notify_node_probe_online}
+                                onCheckedChange={(checked) =>
+                                  saveNotifyConfig({
+                                    notify_node_probe_online: checked === true,
+                                  })
+                                }
+                              />
+                              <Label
+                                htmlFor='notify-node-probe-online'
+                                className='cursor-pointer text-sm'
+                              >
+                                节点探测恢复
+                              </Label>
+                            </div>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    <Label htmlFor='notify-enabled' className='cursor-pointer'>
+                      通知推送
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          开启后，系统会通过 Telegram
+                          及下方「推送渠道」里的邮件、Server酱等渠道发送关键事件通知。点击配置按钮设置
+                          Bot Token 和通知类型。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='notify-enabled'
+                    checked={notifyConfig.notify_enabled}
+                    onCheckedChange={(checked) =>
+                      saveNotifyConfig({ notify_enabled: checked })
+                    }
+                    disabled={updateNotifyMutation.isPending}
+                  />
+                </div>
+
+                {/* 静默模式 */}
+                <div className='flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-900 dark:bg-orange-950'>
+                  <div className='flex items-center gap-2'>
+                    <Label htmlFor='silent-mode' className='cursor-pointer'>
+                      静默模式
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          开启后服务响应返回 404，获取一次订阅后恢复访问{' '}
+                          {silentModeTimeout} 分钟。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='silent-mode'
+                    checked={silentMode}
+                    onCheckedChange={(checked) =>
+                      updateConfig({ silent_mode: checked })
+                    }
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+
+                {/* 订阅响应头流量信息 */}
+                <div className='flex items-center justify-between rounded-lg border p-3'>
+                  <div className='flex items-center gap-2'>
+                    <Label
+                      htmlFor='enable-sub-traffic-header'
+                      className='cursor-pointer'
+                    >
+                      订阅响应头流量信息
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          开启后，获取订阅时读取探针和外部订阅流量数据，并在响应头中写入
+                          subscription-userinfo
+                          信息。关闭后跳过流量读取，不写入流量响应头。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='enable-sub-traffic-header'
+                    checked={enableSubTrafficHeader}
+                    onCheckedChange={(checked) =>
+                      updateConfig({ enable_sub_traffic_header: checked })
+                    }
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+
+                {/* 订阅序列化格式 */}
+                <div className='flex items-center justify-between rounded-lg border p-3'>
+                  <div className='flex items-center gap-2'>
+                    <Label className='cursor-default'>订阅序列化格式</Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          选择 Clash 订阅的输出格式。默认 YAML，选择 JSON
+                          后订阅将以 JSON 格式输出。仅影响 Clash
+                          格式订阅，不影响其他客户端格式（Surge、Sing-Box 等）。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <div className='flex gap-1'>
+                    {[
+                      { value: 'yaml', label: 'YAML' },
+                      { value: 'json', label: 'JSON' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        type='button'
+                        onClick={() =>
                           updateConfig({
-                            cache_expire_minutes: cacheExpireMinutes,
+                            subscription_output_format: opt.value,
                           })
                         }
                         disabled={
                           loadingConfig || updateConfigMutation.isPending
                         }
-                        placeholder='0'
-                        className='w-32'
-                      />
-                      <p className='text-destructive text-xs'>
-                        注意：每次都更新订阅会影响获取订阅接口的响应速度
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value='features' className='space-y-6'>
-            {/* 功能开关 */}
-            <Card>
-              <CardHeader className='pb-4'>
-                <CardTitle>功能开关</CardTitle>
-                <CardDescription>管理系统功能的启用状态</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
-                  {/* 节点探针服务器绑定 */}
-                  <div className='flex items-center justify-between rounded-lg border p-3'>
-                    <div className='flex items-center gap-2'>
-                      <Label
-                        htmlFor='enable-probe-binding'
-                        className='cursor-pointer'
+                        className={`rounded-md border px-3 py-1 text-xs transition-colors ${
+                          subscriptionOutputFormat === opt.value
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-background hover:bg-muted border-border'
+                        }`}
                       >
-                        探针服务器绑定
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            开启后，节点列表将显示探针按钮，可为节点绑定特定的探针服务器。流量统计将只汇总绑定节点的探针流量。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <Switch
-                      id='enable-probe-binding'
-                      checked={enableProbeBinding}
-                      onCheckedChange={(checked) =>
-                        updateConfig({ enable_probe_binding: checked })
-                      }
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-
-                  {/* 短链接 */}
-                  <div className='flex items-center justify-between rounded-lg border p-3'>
-                    <div className='flex items-center gap-2'>
-                      <Label
-                        htmlFor='enable-short-link'
-                        className='cursor-pointer'
-                      >
-                        启用短链接
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            开启后，订阅链接页面将显示6位字符的短链接。可在个人设置页面重置短链接。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <Switch
-                      id='enable-short-link'
-                      checked={enableShortLink}
-                      onCheckedChange={(checked) =>
-                        updateConfig({ enable_short_link: checked })
-                      }
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-
-                  {/* 模板版本选择 */}
-                  <div className='rounded-lg border p-3'>
-                    <div className='mb-3 flex items-center gap-2'>
-                      <Label className='font-medium'>模板版本</Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>v1：使用 rule_templates 目录下的文件模板</p>
-                          <p>v2：使用数据库模板（通用后端，支持网页端管理）</p>
-                          <p>
-                            v3：使用新版模板系统（类 mihomo
-                            配置，支持可视化编辑）
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <div className='flex gap-2'>
-                      {[
-                        { value: 'v1', label: '旧 (v1)' },
-                        { value: 'v2', label: '通用后端 (v2)' },
-                        { value: 'v3', label: '新 (v3)' },
-                      ].map((option) => (
-                        <button
-                          key={option.value}
-                          type='button'
-                          onClick={() =>
-                            updateConfig({ template_version: option.value })
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                          className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors ${
-                            templateVersion === option.value
-                              ? 'bg-primary text-primary-foreground border-primary'
-                              : 'bg-background hover:bg-muted border-border'
-                          } disabled:cursor-not-allowed disabled:opacity-50`}
-                        >
-                          <span
-                            className={`flex h-3 w-3 items-center justify-center rounded-full border-2 ${
-                              templateVersion === option.value
-                                ? 'border-primary-foreground'
-                                : 'border-muted-foreground'
-                            }`}
-                          >
-                            {templateVersion === option.value && (
-                              <span className='bg-primary-foreground h-1.5 w-1.5 rounded-full' />
-                            )}
-                          </span>
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* 代理集合 */}
-                  <div className='flex items-center justify-between rounded-lg border p-3'>
-                    <div className='flex items-center gap-2'>
-                      <Label
-                        htmlFor='enable-proxy-provider'
-                        className='cursor-pointer'
-                      >
-                        启用代理集合
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            代理集合（Proxy
-                            Provider）允许从外部订阅动态加载节点。开启后可在订阅文件页面配置代理集合，并在编辑代理组时将代理集合拖入代理组。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <Switch
-                      id='enable-proxy-provider'
-                      checked={enableProxyProvider}
-                      onCheckedChange={(checked) =>
-                        updateConfig({ enable_proxy_provider: checked })
-                      }
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-
-                  {/* 客户端兼容模式 */}
-                  <div className='flex items-center justify-between rounded-lg border p-3'>
-                    <div className='flex items-center gap-2'>
-                      <Label
-                        htmlFor='client-compatibility-mode'
-                        className='cursor-pointer'
-                      >
-                        客户端兼容模式
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            自动过滤不兼容的节点（如
-                            WireGuard），仅记录日志不报错。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <Switch
-                      id='client-compatibility-mode'
-                      checked={clientCompatibilityMode}
-                      onCheckedChange={(checked) =>
-                        updateConfig({ client_compatibility_mode: checked })
-                      }
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-
-                  {/* 覆写脚本 */}
-                  <div className='flex items-center justify-between rounded-lg border p-3'>
-                    <div className='flex items-center gap-2'>
-                      <Label
-                        htmlFor='enable-override-scripts'
-                        className='cursor-pointer'
-                      >
-                        覆写脚本
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            开启后，覆写管理页面将显示覆写脚本功能，可使用
-                            JavaScript 脚本修改订阅配置或节点属性。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <Switch
-                      id='enable-override-scripts'
-                      checked={enableOverrideScripts}
-                      onCheckedChange={(checked) =>
-                        updateConfig({ enable_override_scripts: checked })
-                      }
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-
-                  {/* 通知推送 */}
-                  <div className='flex items-center justify-between rounded-lg border p-3'>
-                    <div className='flex items-center gap-2'>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant='outline'
-                            size='icon'
-                            className='h-7 w-7'
-                          >
-                            <Settings className='h-3.5 w-3.5' />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          className='w-80'
-                          side='bottom'
-                          align='start'
-                        >
-                          <div className='space-y-4'>
-                            <div className='space-y-2'>
-                              <Label htmlFor='telegram-bot-token'>
-                                Bot Token
-                              </Label>
-                              <Input
-                                id='telegram-bot-token'
-                                value={notifyConfig.telegram_bot_token}
-                                onChange={(e) =>
-                                  setNotifyConfig({
-                                    ...notifyConfig,
-                                    telegram_bot_token: e.target.value,
-                                  })
-                                }
-                                onBlur={() =>
-                                  saveNotifyConfig({
-                                    telegram_bot_token:
-                                      notifyConfig.telegram_bot_token,
-                                  })
-                                }
-                                placeholder='123456:ABC-DEF...'
-                              />
-                            </div>
-                            <div className='space-y-2'>
-                              <Label htmlFor='telegram-chat-id'>Chat ID</Label>
-                              <Input
-                                id='telegram-chat-id'
-                                value={notifyConfig.telegram_chat_id}
-                                onChange={(e) =>
-                                  setNotifyConfig({
-                                    ...notifyConfig,
-                                    telegram_chat_id: e.target.value,
-                                  })
-                                }
-                                onBlur={() =>
-                                  saveNotifyConfig({
-                                    telegram_chat_id:
-                                      notifyConfig.telegram_chat_id,
-                                  })
-                                }
-                                placeholder='-1001234567890'
-                              />
-                            </div>
-                            <Button
-                              variant='outline'
-                              size='sm'
-                              className='w-full'
-                              onClick={() => testNotifyMutation.mutate()}
-                              disabled={
-                                testNotifyMutation.isPending ||
-                                !notifyConfig.telegram_bot_token ||
-                                !notifyConfig.telegram_chat_id
-                              }
-                            >
-                              {testNotifyMutation.isPending
-                                ? '发送中...'
-                                : '发送测试通知'}
-                            </Button>
-                            <div className='space-y-2 border-t pt-3'>
-                              <div className='flex items-center gap-2'>
-                                <Checkbox
-                                  id='notify-subscribe-fetch'
-                                  checked={notifyConfig.notify_subscribe_fetch}
-                                  onCheckedChange={(checked) =>
-                                    saveNotifyConfig({
-                                      notify_subscribe_fetch: checked === true,
-                                    })
-                                  }
-                                />
-                                <Label
-                                  htmlFor='notify-subscribe-fetch'
-                                  className='cursor-pointer text-sm'
-                                >
-                                  订阅获取通知
-                                </Label>
-                              </div>
-                              <div className='flex items-center gap-2'>
-                                <Checkbox
-                                  id='notify-login'
-                                  checked={notifyConfig.notify_login}
-                                  onCheckedChange={(checked) =>
-                                    saveNotifyConfig({
-                                      notify_login: checked === true,
-                                    })
-                                  }
-                                />
-                                <Label
-                                  htmlFor='notify-login'
-                                  className='cursor-pointer text-sm'
-                                >
-                                  登录通知
-                                </Label>
-                              </div>
-                              <div className='flex items-center gap-2'>
-                                <Checkbox
-                                  id='notify-ip-ban'
-                                  checked={notifyConfig.notify_ip_ban}
-                                  onCheckedChange={(checked) =>
-                                    saveNotifyConfig({
-                                      notify_ip_ban: checked === true,
-                                    })
-                                  }
-                                />
-                                <Label
-                                  htmlFor='notify-ip-ban'
-                                  className='cursor-pointer text-sm'
-                                >
-                                  IP 封禁通知
-                                </Label>
-                              </div>
-                              <div className='flex items-center gap-2'>
-                                <Checkbox
-                                  id='notify-silent-mode'
-                                  checked={notifyConfig.notify_silent_mode}
-                                  onCheckedChange={(checked) =>
-                                    saveNotifyConfig({
-                                      notify_silent_mode: checked === true,
-                                    })
-                                  }
-                                />
-                                <Label
-                                  htmlFor='notify-silent-mode'
-                                  className='cursor-pointer text-sm'
-                                >
-                                  静默模式通知
-                                </Label>
-                              </div>
-                              <div className='flex items-center gap-2'>
-                                <Checkbox
-                                  id='notify-expiry'
-                                  checked={notifyConfig.notify_expiry}
-                                  onCheckedChange={(checked) =>
-                                    saveNotifyConfig({
-                                      notify_expiry: checked === true,
-                                    })
-                                  }
-                                />
-                                <Label
-                                  htmlFor='notify-expiry'
-                                  className='cursor-pointer text-sm'
-                                >
-                                  到期提醒通知
-                                </Label>
-                              </div>
-                              <div className='flex items-center gap-2'>
-                                <Checkbox
-                                  id='notify-daily-traffic'
-                                  checked={notifyConfig.notify_daily_traffic}
-                                  onCheckedChange={(checked) =>
-                                    saveNotifyConfig({
-                                      notify_daily_traffic: checked === true,
-                                    })
-                                  }
-                                />
-                                <Label
-                                  htmlFor='notify-daily-traffic'
-                                  className='cursor-pointer text-sm'
-                                >
-                                  每日流量通知
-                                </Label>
-                                {notifyConfig.notify_daily_traffic && (
-                                  <Input
-                                    type='time'
-                                    value={
-                                      notifyConfig.notify_daily_traffic_time
-                                    }
-                                    onChange={(e) =>
-                                      setNotifyConfig({
-                                        ...notifyConfig,
-                                        notify_daily_traffic_time:
-                                          e.target.value,
-                                      })
-                                    }
-                                    onBlur={() =>
-                                      saveNotifyConfig({
-                                        notify_daily_traffic_time:
-                                          notifyConfig.notify_daily_traffic_time,
-                                      })
-                                    }
-                                    className='h-7 w-24 text-xs'
-                                  />
-                                )}
-                              </div>
-                              {/* 节点探测上下线:探测判定节点连不上/恢复时推送 */}
-                              <div className='flex items-center gap-2'>
-                                <Checkbox
-                                  id='notify-node-probe-offline'
-                                  checked={
-                                    notifyConfig.notify_node_probe_offline
-                                  }
-                                  onCheckedChange={(checked) =>
-                                    saveNotifyConfig({
-                                      notify_node_probe_offline:
-                                        checked === true,
-                                    })
-                                  }
-                                />
-                                <Label
-                                  htmlFor='notify-node-probe-offline'
-                                  className='cursor-pointer text-sm'
-                                >
-                                  节点探测离线
-                                </Label>
-                              </div>
-                              <div className='flex items-center gap-2'>
-                                <Checkbox
-                                  id='notify-node-probe-online'
-                                  checked={
-                                    notifyConfig.notify_node_probe_online
-                                  }
-                                  onCheckedChange={(checked) =>
-                                    saveNotifyConfig({
-                                      notify_node_probe_online:
-                                        checked === true,
-                                    })
-                                  }
-                                />
-                                <Label
-                                  htmlFor='notify-node-probe-online'
-                                  className='cursor-pointer text-sm'
-                                >
-                                  节点探测恢复
-                                </Label>
-                              </div>
-                            </div>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                      <Label
-                        htmlFor='notify-enabled'
-                        className='cursor-pointer'
-                      >
-                        通知推送
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            开启后，系统会通过 Telegram
-                            发送关键事件通知。点击配置按钮设置 Bot Token
-                            和通知类型。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <Switch
-                      id='notify-enabled'
-                      checked={notifyConfig.notify_enabled}
-                      onCheckedChange={(checked) =>
-                        saveNotifyConfig({ notify_enabled: checked })
-                      }
-                      disabled={updateNotifyMutation.isPending}
-                    />
-                  </div>
-
-                  {/* 静默模式 */}
-                  <div className='flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-900 dark:bg-orange-950'>
-                    <div className='flex items-center gap-2'>
-                      <Label htmlFor='silent-mode' className='cursor-pointer'>
-                        静默模式
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            开启后服务响应返回 404，获取一次订阅后恢复访问{' '}
-                            {silentModeTimeout} 分钟。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <Switch
-                      id='silent-mode'
-                      checked={silentMode}
-                      onCheckedChange={(checked) =>
-                        updateConfig({ silent_mode: checked })
-                      }
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-
-                  {/* 订阅响应头流量信息 */}
-                  <div className='flex items-center justify-between rounded-lg border p-3'>
-                    <div className='flex items-center gap-2'>
-                      <Label
-                        htmlFor='enable-sub-traffic-header'
-                        className='cursor-pointer'
-                      >
-                        订阅响应头流量信息
-                      </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            开启后，获取订阅时读取探针和外部订阅流量数据，并在响应头中写入
-                            subscription-userinfo
-                            信息。关闭后跳过流量读取，不写入流量响应头。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <Switch
-                      id='enable-sub-traffic-header'
-                      checked={enableSubTrafficHeader}
-                      onCheckedChange={(checked) =>
-                        updateConfig({ enable_sub_traffic_header: checked })
-                      }
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-
-                  {/* 订阅序列化格式 */}
-                  <div className='flex items-center justify-between rounded-lg border p-3'>
-                    <div className='flex items-center gap-2'>
-                      <Label className='cursor-default'>订阅序列化格式</Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            选择 Clash 订阅的输出格式。默认 YAML，选择 JSON
-                            后订阅将以 JSON 格式输出。仅影响 Clash
-                            格式订阅，不影响其他客户端格式（Surge、Sing-Box
-                            等）。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <div className='flex gap-1'>
-                      {[
-                        { value: 'yaml', label: 'YAML' },
-                        { value: 'json', label: 'JSON' },
-                      ].map((opt) => (
-                        <button
-                          key={opt.value}
-                          type='button'
-                          onClick={() =>
-                            updateConfig({
-                              subscription_output_format: opt.value,
-                            })
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                          className={`rounded-md border px-3 py-1 text-xs transition-colors ${
-                            subscriptionOutputFormat === opt.value
-                              ? 'bg-primary text-primary-foreground border-primary'
-                              : 'bg-background hover:bg-muted border-border'
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
+                        {opt.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
+              </div>
 
-                {/* 静默模式超时设置 */}
-                {silentMode && (
-                  <div className='mt-4 space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-900 dark:bg-orange-950'>
-                    <div className='flex items-center gap-2'>
-                      <Label htmlFor='silent-mode-timeout'>
-                        恢复访问时长（分钟）
+              {/* 静默模式超时设置 */}
+              {silentMode && (
+                <div className='mt-4 space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-900 dark:bg-orange-950'>
+                  <div className='flex items-center gap-2'>
+                    <Label htmlFor='silent-mode-timeout'>
+                      恢复访问时长（分钟）
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>用户获取订阅后，服务器恢复访问的时长。</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Input
+                    id='silent-mode-timeout'
+                    type='number'
+                    min={1}
+                    max={1440}
+                    value={silentModeTimeout}
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                    onChange={(e) =>
+                      setSilentModeTimeout(parseInt(e.target.value) || 15)
+                    }
+                    onBlur={() =>
+                      updateConfig({ silent_mode_timeout: silentModeTimeout })
+                    }
+                    className='max-w-32'
+                  />
+                </div>
+              )}
+
+              {/* 订阅信息节点 */}
+              <div className='mt-4 space-y-3 rounded-lg border p-4'>
+                <div className='flex items-center justify-between'>
+                  <div className='flex items-center gap-2'>
+                    <Label
+                      htmlFor='enable-sub-info-nodes'
+                      className='cursor-pointer font-medium'
+                    >
+                      订阅信息节点
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>
+                          开启后，订阅输出时在节点列表顶部添加过期时间和剩余流量信息节点。
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='enable-sub-info-nodes'
+                    checked={enableSubInfoNodes}
+                    onCheckedChange={(checked) =>
+                      updateConfig({ enable_sub_info_nodes: checked })
+                    }
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+                {enableSubInfoNodes && (
+                  <div className='flex items-start justify-between gap-4 border-t pt-3'>
+                    <div className='flex-1 space-y-1'>
+                      <Label htmlFor='sub-info-v2ray-only'>
+                        仅 v2ray 系客户端注入
                       </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>用户获取订阅后，服务器恢复访问的时长。</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      <p className='text-muted-foreground text-xs'>
+                        开启后信息节点只出现在 v2ray / base64
+                        订阅里(转换前塞进节点列表);Clash 等 YAML
+                        客户端不再注入,避免在支持流量头的客户端里重复显示。
+                      </p>
                     </div>
-                    <Input
-                      id='silent-mode-timeout'
-                      type='number'
-                      min={1}
-                      max={1440}
-                      value={silentModeTimeout}
+                    <Switch
+                      id='sub-info-v2ray-only'
+                      checked={subInfoV2RayOnly}
+                      onCheckedChange={(checked) =>
+                        updateConfig({ sub_info_v2ray_only: checked })
+                      }
                       disabled={loadingConfig || updateConfigMutation.isPending}
-                      onChange={(e) =>
-                        setSilentModeTimeout(parseInt(e.target.value) || 15)
-                      }
-                      onBlur={() =>
-                        updateConfig({ silent_mode_timeout: silentModeTimeout })
-                      }
-                      className='max-w-32'
                     />
                   </div>
                 )}
-
-                {/* 订阅信息节点 */}
-                <div className='mt-4 space-y-3 rounded-lg border p-4'>
-                  <div className='flex items-center justify-between'>
-                    <div className='flex items-center gap-2'>
-                      <Label
-                        htmlFor='enable-sub-info-nodes'
-                        className='cursor-pointer font-medium'
-                      >
-                        订阅信息节点
+                {enableSubInfoNodes && (
+                  <div className='grid grid-cols-2 gap-3 border-t pt-3'>
+                    <div className='space-y-2'>
+                      <Label htmlFor='sub-info-expire-prefix'>
+                        过期时间前缀
                       </Label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <CircleHelp className='text-muted-foreground h-4 w-4 cursor-help' />
-                        </TooltipTrigger>
-                        <TooltipContent side='top' className='max-w-xs'>
-                          <p>
-                            开启后，订阅输出时在节点列表顶部添加过期时间和剩余流量信息节点。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
+                      <Input
+                        id='sub-info-expire-prefix'
+                        value={subInfoExpirePrefix}
+                        onChange={(e) => setSubInfoExpirePrefix(e.target.value)}
+                        onBlur={() =>
+                          updateConfig({
+                            sub_info_expire_prefix: subInfoExpirePrefix,
+                          })
+                        }
+                        disabled={
+                          loadingConfig || updateConfigMutation.isPending
+                        }
+                        placeholder='📅过期时间'
+                      />
                     </div>
-                    <Switch
-                      id='enable-sub-info-nodes'
-                      checked={enableSubInfoNodes}
-                      onCheckedChange={(checked) =>
-                        updateConfig({ enable_sub_info_nodes: checked })
+                    <div className='space-y-2'>
+                      <Label htmlFor='sub-info-traffic-prefix'>
+                        剩余流量前缀
+                      </Label>
+                      <Input
+                        id='sub-info-traffic-prefix'
+                        value={subInfoTrafficPrefix}
+                        onChange={(e) =>
+                          setSubInfoTrafficPrefix(e.target.value)
+                        }
+                        onBlur={() =>
+                          updateConfig({
+                            sub_info_traffic_prefix: subInfoTrafficPrefix,
+                          })
+                        }
+                        disabled={
+                          loadingConfig || updateConfigMutation.isPending
+                        }
+                        placeholder='⌛剩余流量'
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 推送渠道:邮件 SMTP / Server酱 / 飞书 / 钉钉 / Bark,按事件分发 */}
+          <NotifyChannelsCard
+            active={settingsTab === 'features'}
+            notifyEnabled={notifyConfig.notify_enabled}
+          />
+          {/* 安装到桌面(PWA) */}
+          <PWASettingCard />
+          </TabsContent>
+
+          <TabsContent value='security' className='space-y-6'>
+          {/* 安全配置 */}
+          <Card>
+            <CardHeader className='pb-4'>
+              <CardTitle>安全配置</CardTitle>
+              <CardDescription>
+                配置登录保护、暴力探测封禁和订阅频率限制
+              </CardDescription>
+            </CardHeader>
+            <CardContent className='space-y-6'>
+              {/* 不封禁本地 IP */}
+              <div className='flex items-start justify-between gap-4'>
+                <div className='flex-1'>
+                  <h4 className='text-sm font-medium'>不封禁本地 IP</h4>
+                  <p className='text-muted-foreground mt-1 text-xs'>
+                    反代/Docker 场景下，若上游未传
+                    X-Forwarded-For，主控可能将所有用户视作同一本机 IP —
+                    一次封禁会让所有人连不上。开启后，loopback / 内网 / 私有网段
+                    IP 跳过封禁与频率限制（登录账户维度仍生效）。
+                  </p>
+                </div>
+                <Switch
+                  checked={skipLocalIP}
+                  onCheckedChange={(v) => {
+                    setSkipLocalIP(v)
+                    updateConfig({ skip_local_ip: v })
+                  }}
+                  disabled={loadingConfig || updateConfigMutation.isPending}
+                />
+              </div>
+
+              <hr className='border-border/50' />
+
+              <div className='flex items-start justify-between gap-4'>
+                <div className='flex-1'>
+                  <h4 className='text-sm font-medium'>禁止浏览器访问订阅</h4>
+                  <p className='text-muted-foreground mt-1 text-xs'>
+                    开启后仅允许 Clash、Stash、Loon、Quantumult
+                    X、Surge、sing-box、v2ray
+                    等可识别的代理客户端获取订阅;浏览器、爬虫等未知 UA 一律拦截。
+                  </p>
+                </div>
+                <Switch
+                  checked={blockUnknownSubUA}
+                  onCheckedChange={(v) => {
+                    setBlockUnknownSubUA(v)
+                    updateConfig({ block_unknown_subscription_ua: v })
+                  }}
+                  disabled={loadingConfig || updateConfigMutation.isPending}
+                />
+              </div>
+
+              <hr className='border-border/50' />
+
+              <TurnstileSettings />
+
+              <hr className='border-border/50' />
+
+              <FetchAllowListSettings />
+
+              <hr className='border-border/50' />
+
+              {/* 登录保护 */}
+              <div className='space-y-3'>
+                <h4 className='text-sm font-medium'>登录保护</h4>
+                <p className='text-muted-foreground text-xs'>
+                  限制登录失败次数，防止暴力破解密码
+                </p>
+                <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+                  <div className='space-y-1'>
+                    <Label className='text-xs'>最大尝试次数</Label>
+                    <Input
+                      type='number'
+                      min={1}
+                      value={loginRateMaxAttempts}
+                      onChange={(e) =>
+                        setLoginRateMaxAttempts(Number(e.target.value) || 5)
                       }
                       disabled={loadingConfig || updateConfigMutation.isPending}
                     />
                   </div>
-                  {enableSubInfoNodes && (
-                    <div className='flex items-start justify-between gap-4 border-t pt-3'>
-                      <div className='flex-1 space-y-1'>
-                        <Label htmlFor='sub-info-v2ray-only'>
-                          仅 v2ray 系客户端注入
-                        </Label>
-                        <p className='text-muted-foreground text-xs'>
-                          开启后信息节点只出现在 v2ray / base64
-                          订阅里(转换前塞进节点列表);Clash 等 YAML
-                          客户端不再注入,避免在支持流量头的客户端里重复显示。
-                        </p>
-                      </div>
-                      <Switch
-                        id='sub-info-v2ray-only'
-                        checked={subInfoV2RayOnly}
-                        onCheckedChange={(checked) =>
-                          updateConfig({ sub_info_v2ray_only: checked })
+                  <div className='space-y-1'>
+                    <Label className='text-xs'>时间窗口 (分钟)</Label>
+                    <Input
+                      type='number'
+                      min={1}
+                      value={loginRateWindow}
+                      onChange={(e) =>
+                        setLoginRateWindow(Number(e.target.value) || 60)
+                      }
+                      disabled={loadingConfig || updateConfigMutation.isPending}
+                    />
+                  </div>
+                  <div className='space-y-1'>
+                    <Label className='text-xs'>锁定时长 (分钟)</Label>
+                    <Input
+                      type='number'
+                      min={1}
+                      value={loginRateLockDuration}
+                      onChange={(e) =>
+                        setLoginRateLockDuration(Number(e.target.value) || 60)
+                      }
+                      disabled={loadingConfig || updateConfigMutation.isPending}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <hr className='border-border/50' />
+
+              {/* 订阅暴力探测防护 */}
+              <div className='space-y-3'>
+                <div className='flex items-center justify-between'>
+                  <div>
+                    <h4 className='text-sm font-medium'>订阅暴力探测防护</h4>
+                    <p className='text-muted-foreground text-xs'>
+                      访问不存在的订阅链接多次后封禁 IP
+                    </p>
+                  </div>
+                  <Switch
+                    checked={bruteForceEnabled}
+                    onCheckedChange={(v) => {
+                      setBruteForceEnabled(v)
+                      updateConfig({ brute_force_enabled: v })
+                    }}
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+                {bruteForceEnabled && (
+                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+                    <div className='space-y-1'>
+                      <Label className='text-xs'>最大失败次数</Label>
+                      <Input
+                        type='number'
+                        min={1}
+                        value={bruteForceMaxFailures}
+                        onChange={(e) =>
+                          setBruteForceMaxFailures(Number(e.target.value) || 5)
                         }
                         disabled={
                           loadingConfig || updateConfigMutation.isPending
                         }
                       />
                     </div>
-                  )}
-                  {enableSubInfoNodes && (
-                    <div className='grid grid-cols-2 gap-3 border-t pt-3'>
-                      <div className='space-y-2'>
-                        <Label htmlFor='sub-info-expire-prefix'>
-                          过期时间前缀
-                        </Label>
-                        <Input
-                          id='sub-info-expire-prefix'
-                          value={subInfoExpirePrefix}
-                          onChange={(e) =>
-                            setSubInfoExpirePrefix(e.target.value)
-                          }
-                          onBlur={() =>
-                            updateConfig({
-                              sub_info_expire_prefix: subInfoExpirePrefix,
-                            })
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                          placeholder='📅过期时间'
-                        />
-                      </div>
-                      <div className='space-y-2'>
-                        <Label htmlFor='sub-info-traffic-prefix'>
-                          剩余流量前缀
-                        </Label>
-                        <Input
-                          id='sub-info-traffic-prefix'
-                          value={subInfoTrafficPrefix}
-                          onChange={(e) =>
-                            setSubInfoTrafficPrefix(e.target.value)
-                          }
-                          onBlur={() =>
-                            updateConfig({
-                              sub_info_traffic_prefix: subInfoTrafficPrefix,
-                            })
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                          placeholder='⌛剩余流量'
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value='security' className='space-y-6'>
-            {/* 安全配置 */}
-            <Card>
-              <CardHeader className='pb-4'>
-                <CardTitle>安全配置</CardTitle>
-                <CardDescription>
-                  配置登录保护、暴力探测封禁和订阅频率限制
-                </CardDescription>
-              </CardHeader>
-              <CardContent className='space-y-6'>
-                {/* 不封禁本地 IP */}
-                <div className='flex items-start justify-between gap-4'>
-                  <div className='flex-1'>
-                    <h4 className='text-sm font-medium'>不封禁本地 IP</h4>
-                    <p className='text-muted-foreground mt-1 text-xs'>
-                      反代/Docker 场景下，若上游未传
-                      X-Forwarded-For，主控可能将所有用户视作同一本机 IP —
-                      一次封禁会让所有人连不上。开启后，loopback / 内网 /
-                      私有网段 IP 跳过封禁与频率限制（登录账户维度仍生效）。
-                    </p>
-                  </div>
-                  <Switch
-                    checked={skipLocalIP}
-                    onCheckedChange={(v) => {
-                      setSkipLocalIP(v)
-                      updateConfig({ skip_local_ip: v })
-                    }}
-                    disabled={loadingConfig || updateConfigMutation.isPending}
-                  />
-                </div>
-
-                <hr className='border-border/50' />
-
-                <div className='flex items-start justify-between gap-4'>
-                  <div className='flex-1'>
-                    <h4 className='text-sm font-medium'>禁止浏览器访问订阅</h4>
-                    <p className='text-muted-foreground mt-1 text-xs'>
-                      开启后仅允许 Clash、Stash、Loon、Quantumult
-                      X、Surge、sing-box、v2ray
-                      等可识别的代理客户端获取订阅;浏览器、爬虫等未知 UA
-                      一律拦截。
-                    </p>
-                  </div>
-                  <Switch
-                    checked={blockUnknownSubUA}
-                    onCheckedChange={(v) => {
-                      setBlockUnknownSubUA(v)
-                      updateConfig({ block_unknown_subscription_ua: v })
-                    }}
-                    disabled={loadingConfig || updateConfigMutation.isPending}
-                  />
-                </div>
-
-                <hr className='border-border/50' />
-
-                <TurnstileSettings />
-
-                <hr className='border-border/50' />
-
-                {/* 登录保护 */}
-                <div className='space-y-3'>
-                  <h4 className='text-sm font-medium'>登录保护</h4>
-                  <p className='text-muted-foreground text-xs'>
-                    限制登录失败次数，防止暴力破解密码
-                  </p>
-                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
                     <div className='space-y-1'>
-                      <Label className='text-xs'>最大尝试次数</Label>
+                      <Label className='text-xs'>统计窗口 (分钟)</Label>
                       <Input
                         type='number'
                         min={1}
-                        value={loginRateMaxAttempts}
+                        value={bruteForceWindow}
                         onChange={(e) =>
-                          setLoginRateMaxAttempts(Number(e.target.value) || 5)
+                          setBruteForceWindow(Number(e.target.value) || 1440)
+                        }
+                        disabled={
+                          loadingConfig || updateConfigMutation.isPending
+                        }
+                      />
+                    </div>
+                    <div className='space-y-1'>
+                      <Label className='text-xs'>封禁时长 (分钟)</Label>
+                      <Input
+                        type='number'
+                        min={1}
+                        value={bruteForceBlockDuration}
+                        onChange={(e) =>
+                          setBruteForceBlockDuration(
+                            Number(e.target.value) || 1440
+                          )
+                        }
+                        disabled={
+                          loadingConfig || updateConfigMutation.isPending
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <hr className='border-border/50' />
+
+              {/* 订阅频率限制 */}
+              <div className='space-y-3'>
+                <div className='flex items-center justify-between'>
+                  <div>
+                    <h4 className='text-sm font-medium'>订阅频率限制</h4>
+                    <p className='text-muted-foreground text-xs'>
+                      限制每个 IP 获取订阅的频率，防止枚举和抓取
+                    </p>
+                  </div>
+                  <Switch
+                    checked={subRateLimitEnabled}
+                    onCheckedChange={(v) => {
+                      setSubRateLimitEnabled(v)
+                      updateConfig({ sub_rate_limit_enabled: v })
+                    }}
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+                {subRateLimitEnabled && (
+                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+                    <div className='space-y-1'>
+                      <Label className='text-xs'>最大请求次数</Label>
+                      <Input
+                        type='number'
+                        min={1}
+                        value={subRateLimitMax}
+                        onChange={(e) =>
+                          setSubRateLimitMax(Number(e.target.value) || 30)
                         }
                         disabled={
                           loadingConfig || updateConfigMutation.isPending
@@ -1565,23 +1691,9 @@ function SystemSettingsPage() {
                       <Input
                         type='number'
                         min={1}
-                        value={loginRateWindow}
+                        value={subRateLimitWindow}
                         onChange={(e) =>
-                          setLoginRateWindow(Number(e.target.value) || 60)
-                        }
-                        disabled={
-                          loadingConfig || updateConfigMutation.isPending
-                        }
-                      />
-                    </div>
-                    <div className='space-y-1'>
-                      <Label className='text-xs'>锁定时长 (分钟)</Label>
-                      <Input
-                        type='number'
-                        min={1}
-                        value={loginRateLockDuration}
-                        onChange={(e) =>
-                          setLoginRateLockDuration(Number(e.target.value) || 60)
+                          setSubRateLimitWindow(Number(e.target.value) || 120)
                         }
                         disabled={
                           loadingConfig || updateConfigMutation.isPending
@@ -1589,254 +1701,131 @@ function SystemSettingsPage() {
                       />
                     </div>
                   </div>
-                </div>
+                )}
+              </div>
 
-                <hr className='border-border/50' />
+              <Button
+                className='w-full sm:w-auto'
+                onClick={() =>
+                  updateConfig({
+                    login_rate_max_attempts: loginRateMaxAttempts,
+                    login_rate_window: loginRateWindow,
+                    login_rate_lock_duration: loginRateLockDuration,
+                    brute_force_enabled: bruteForceEnabled,
+                    brute_force_max_failures: bruteForceMaxFailures,
+                    brute_force_window: bruteForceWindow,
+                    brute_force_block_duration: bruteForceBlockDuration,
+                    sub_rate_limit_enabled: subRateLimitEnabled,
+                    sub_rate_limit_max: subRateLimitMax,
+                    sub_rate_limit_window: subRateLimitWindow,
+                    skip_local_ip: skipLocalIP,
+                    block_unknown_subscription_ua: blockUnknownSubUA,
+                  })
+                }
+                disabled={loadingConfig || updateConfigMutation.isPending}
+              >
+                保存安全配置
+              </Button>
+            </CardContent>
+          </Card>
 
-                {/* 订阅暴力探测防护 */}
-                <div className='space-y-3'>
-                  <div className='flex items-center justify-between'>
-                    <div>
-                      <h4 className='text-sm font-medium'>订阅暴力探测防护</h4>
-                      <p className='text-muted-foreground text-xs'>
-                        访问不存在的订阅链接多次后封禁 IP
-                      </p>
-                    </div>
-                    <Switch
-                      checked={bruteForceEnabled}
-                      onCheckedChange={(v) => {
-                        setBruteForceEnabled(v)
-                        updateConfig({ brute_force_enabled: v })
-                      }}
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-                  {bruteForceEnabled && (
-                    <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
-                      <div className='space-y-1'>
-                        <Label className='text-xs'>最大失败次数</Label>
-                        <Input
-                          type='number'
-                          min={1}
-                          value={bruteForceMaxFailures}
-                          onChange={(e) =>
-                            setBruteForceMaxFailures(
-                              Number(e.target.value) || 5
-                            )
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                        />
-                      </div>
-                      <div className='space-y-1'>
-                        <Label className='text-xs'>统计窗口 (分钟)</Label>
-                        <Input
-                          type='number'
-                          min={1}
-                          value={bruteForceWindow}
-                          onChange={(e) =>
-                            setBruteForceWindow(Number(e.target.value) || 1440)
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                        />
-                      </div>
-                      <div className='space-y-1'>
-                        <Label className='text-xs'>封禁时长 (分钟)</Label>
-                        <Input
-                          type='number'
-                          min={1}
-                          value={bruteForceBlockDuration}
-                          onChange={(e) =>
-                            setBruteForceBlockDuration(
-                              Number(e.target.value) || 1440
-                            )
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <hr className='border-border/50' />
-
-                {/* 订阅频率限制 */}
-                <div className='space-y-3'>
-                  <div className='flex items-center justify-between'>
-                    <div>
-                      <h4 className='text-sm font-medium'>订阅频率限制</h4>
-                      <p className='text-muted-foreground text-xs'>
-                        限制每个 IP 获取订阅的频率，防止枚举和抓取
-                      </p>
-                    </div>
-                    <Switch
-                      checked={subRateLimitEnabled}
-                      onCheckedChange={(v) => {
-                        setSubRateLimitEnabled(v)
-                        updateConfig({ sub_rate_limit_enabled: v })
-                      }}
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                    />
-                  </div>
-                  {subRateLimitEnabled && (
-                    <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
-                      <div className='space-y-1'>
-                        <Label className='text-xs'>最大请求次数</Label>
-                        <Input
-                          type='number'
-                          min={1}
-                          value={subRateLimitMax}
-                          onChange={(e) =>
-                            setSubRateLimitMax(Number(e.target.value) || 30)
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                        />
-                      </div>
-                      <div className='space-y-1'>
-                        <Label className='text-xs'>时间窗口 (分钟)</Label>
-                        <Input
-                          type='number'
-                          min={1}
-                          value={subRateLimitWindow}
-                          onChange={(e) =>
-                            setSubRateLimitWindow(Number(e.target.value) || 120)
-                          }
-                          disabled={
-                            loadingConfig || updateConfigMutation.isPending
-                          }
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <Button
-                  className='w-full sm:w-auto'
-                  onClick={() =>
-                    updateConfig({
-                      login_rate_max_attempts: loginRateMaxAttempts,
-                      login_rate_window: loginRateWindow,
-                      login_rate_lock_duration: loginRateLockDuration,
-                      brute_force_enabled: bruteForceEnabled,
-                      brute_force_max_failures: bruteForceMaxFailures,
-                      brute_force_window: bruteForceWindow,
-                      brute_force_block_duration: bruteForceBlockDuration,
-                      sub_rate_limit_enabled: subRateLimitEnabled,
-                      sub_rate_limit_max: subRateLimitMax,
-                      sub_rate_limit_window: subRateLimitWindow,
-                      skip_local_ip: skipLocalIP,
-                      block_unknown_subscription_ua: blockUnknownSubUA,
-                    })
-                  }
-                  disabled={loadingConfig || updateConfigMutation.isPending}
-                >
-                  保存安全配置
-                </Button>
-              </CardContent>
-            </Card>
           </TabsContent>
 
           <TabsContent value='advanced' className='space-y-6'>
-            {/* 代理组配置同步 */}
-            <Card>
-              <CardHeader className='pb-4'>
-                <CardTitle>代理组配置同步</CardTitle>
-                <CardDescription>
-                  从远程同步最新的预设代理组配置
-                </CardDescription>
-              </CardHeader>
-              <CardContent className='space-y-4'>
-                <div className='flex flex-col gap-3'>
-                  <p className='text-muted-foreground text-sm'>
-                    代理组配置包含常用规则分类和对应的 rule-providers
-                    设置。同步后将更新生成订阅页面的规则选择器和预置代理组。
-                  </p>
-                  <div className='space-y-2'>
-                    <Label htmlFor='proxy-groups-source-url'>
-                      远程配置地址
-                    </Label>
-                    <Input
-                      id='proxy-groups-source-url'
-                      value={proxyGroupsSourceUrl}
-                      placeholder='https://raw.githubusercontent.com/iluobei/miaomiaowu/refs/heads/main/proxy_groups/proxy_groups.json'
-                      disabled={loadingConfig || updateConfigMutation.isPending}
-                      onChange={(e) => setProxyGroupsSourceUrl(e.target.value)}
-                      onBlur={() => {
-                        const trimmed = proxyGroupsSourceUrl.trim()
-                        setProxyGroupsSourceUrl(trimmed)
-                        updateConfig({ proxy_groups_source_url: trimmed })
-                      }}
-                    />
-                    <p className='text-muted-foreground text-xs'>
-                      留空使用系统默认地址或环境变量配置
-                    </p>
-                  </div>
-                  <Button
-                    onClick={() => {
-                      const override = proxyGroupsSourceUrl.trim() || undefined
-                      syncProxyGroupsMutation.mutate(override, {
-                        onSuccess: (data) => {
-                          toast.success(data.message || '代理组配置同步成功')
-                        },
-                        onError: (error) => {
-                          handleServerError(error)
-                        },
-                      })
+          {/* 代理组配置同步 */}
+          <Card>
+            <CardHeader className='pb-4'>
+              <CardTitle>代理组配置同步</CardTitle>
+              <CardDescription>从远程同步最新的预设代理组配置</CardDescription>
+            </CardHeader>
+            <CardContent className='space-y-4'>
+              <div className='flex flex-col gap-3'>
+                <p className='text-muted-foreground text-sm'>
+                  代理组配置包含常用规则分类和对应的 rule-providers
+                  设置。同步后将更新生成订阅页面的规则选择器和预置代理组。
+                </p>
+                <div className='space-y-2'>
+                  <Label htmlFor='proxy-groups-source-url'>远程配置地址</Label>
+                  <Input
+                    id='proxy-groups-source-url'
+                    value={proxyGroupsSourceUrl}
+                    placeholder='https://raw.githubusercontent.com/iluobei/miaomiaowu/refs/heads/main/proxy_groups/proxy_groups.json'
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                    onChange={(e) => setProxyGroupsSourceUrl(e.target.value)}
+                    onBlur={() => {
+                      const trimmed = proxyGroupsSourceUrl.trim()
+                      setProxyGroupsSourceUrl(trimmed)
+                      updateConfig({ proxy_groups_source_url: trimmed })
                     }}
-                    disabled={syncProxyGroupsMutation.isPending}
-                    className='w-full sm:w-auto'
-                  >
-                    {syncProxyGroupsMutation.isPending ? (
-                      <>
-                        <RefreshCw className='mr-2 h-4 w-4 animate-spin' />
-                        同步中...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className='mr-2 h-4 w-4' />
-                        同步代理组配置
-                      </>
-                    )}
-                  </Button>
-                  {syncProxyGroupsMutation.isSuccess && (
-                    <p className='text-sm text-green-600 dark:text-green-400'>
-                      ✓ 同步成功，配置已更新
-                    </p>
-                  )}
+                  />
+                  <p className='text-muted-foreground text-xs'>
+                    留空使用系统默认地址或环境变量配置
+                  </p>
                 </div>
-              </CardContent>
-            </Card>
+                <Button
+                  onClick={() => {
+                    const override = proxyGroupsSourceUrl.trim() || undefined
+                    syncProxyGroupsMutation.mutate(override, {
+                      onSuccess: (data) => {
+                        toast.success(data.message || '代理组配置同步成功')
+                      },
+                      onError: (error) => {
+                        handleServerError(error)
+                      },
+                    })
+                  }}
+                  disabled={syncProxyGroupsMutation.isPending}
+                  className='w-full sm:w-auto'
+                >
+                  {syncProxyGroupsMutation.isPending ? (
+                    <>
+                      <RefreshCw className='mr-2 h-4 w-4 animate-spin' />
+                      同步中...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className='mr-2 h-4 w-4' />
+                      同步代理组配置
+                    </>
+                  )}
+                </Button>
+                {syncProxyGroupsMutation.isSuccess && (
+                  <p className='text-sm text-green-600 dark:text-green-400'>
+                    ✓ 同步成功，配置已更新
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
-            {/* 访问控制:仅本机访问开关(issue #106) */}
-            <AccessControlCard />
+          {/* 访问控制:仅本机访问开关(issue #106) */}
+          <AccessControlCard />
+
+          {/* 自动备份到 WebDAV / S3 / Google Drive(从妙妙屋X 移植) */}
+          <AutoBackupCard />
           </TabsContent>
 
           <TabsContent value='probe' className='space-y-6'>
-            {/* 节点探测:开关 + 探测源 + 勾选节点 + 掉线自动重同步。
+          {/* 节点探测:开关 + 探测源 + 勾选节点 + 掉线自动重同步。
               与节点管理页的「节点探测」弹窗是同一个组件、同一组接口,不会两处对不上。 */}
-            <Card>
-              <CardHeader className='pb-4'>
-                <CardTitle>节点探测</CardTitle>
-                <CardDescription>
-                  定时真连一次节点,测连通性与真实延迟;掉线还能自动重拉外部订阅
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <NodeProbePanel />
-              </CardContent>
-            </Card>
+          <Card>
+            <CardHeader className='pb-4'>
+              <CardTitle>节点探测</CardTitle>
+              <CardDescription>
+                定时真连一次节点,测连通性与真实延迟;掉线还能自动重拉外部订阅
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <NodeProbePanel />
+            </CardContent>
+          </Card>
           </TabsContent>
 
           <TabsContent value='appearance' className='space-y-6'>
-            {/* 面板壁纸 / 液态玻璃外观 */}
-            <PanelWallpaperCard />
+          {/* 面板壁纸 / 液态玻璃外观 */}
+          <PanelWallpaperCard />
+          {/* 菜单排序与显隐 */}
+          <NavMenuCard />
           </TabsContent>
         </Tabs>
       </main>
@@ -1975,6 +1964,50 @@ function TurnstileSettings() {
         disabled={settings.isLoading || save.isPending}
       >
         {save.isPending ? '保存中...' : '保存 Turnstile 设置'}
+      </Button>
+    </div>
+  )
+}
+
+function FetchAllowListSettings() {
+  const [allowedHosts, setAllowedHosts] = useState('')
+  const settings = useQuery({
+    queryKey: ['fetch-allowlist-settings'],
+    queryFn: async () => (await api.get('/api/admin/security/fetch-allowlist')).data as {
+      allowed_hosts: string
+    },
+  })
+  useEffect(() => {
+    if (!settings.data) return
+    setAllowedHosts(settings.data.allowed_hosts ?? '')
+  }, [settings.data])
+  const save = useMutation({
+    mutationFn: async () => api.put('/api/admin/security/fetch-allowlist', {
+      allowed_hosts: allowedHosts.trim(),
+    }),
+    onSuccess: () => {
+      settings.refetch()
+      toast.success('内网拉取白名单已保存')
+    },
+    onError: handleServerError,
+  })
+  return (
+    <div className='space-y-3'>
+      <div>
+        <h4 className='text-sm font-medium'>内网拉取白名单</h4>
+        <p className='mt-1 text-xs text-muted-foreground'>
+          拉取外部订阅、远程模板时默认拒绝内网和保留地址。如需使用部署在内网的 sub-store 等服务，在此每行填写一项：域名（同时匹配其子域名）、IP 或 CIDR 网段。
+        </p>
+      </div>
+      <Textarea
+        value={allowedHosts}
+        onChange={(event) => setAllowedHosts(event.target.value)}
+        placeholder={'sub.example.com\n192.168.1.10\n10.0.0.0/8'}
+        rows={4}
+        className='font-mono text-xs'
+      />
+      <Button type='button' variant='outline' onClick={() => save.mutate()} disabled={settings.isLoading || save.isPending}>
+        {save.isPending ? '保存中...' : '保存白名单'}
       </Button>
     </div>
   )

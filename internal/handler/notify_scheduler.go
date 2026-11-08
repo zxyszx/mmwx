@@ -95,104 +95,31 @@ func sendExpiryNotification(ctx context.Context, repo *storage.TrafficRepository
 	files, err := repo.ListSubscribeFiles(ctx)
 	if err != nil {
 		logger.Warn("[Notify] 获取订阅文件失败", "error", err)
+		return
 	}
 
 	now := time.Now()
 	threeDaysLater := now.Add(3 * 24 * time.Hour)
 
-	var sections []string
-	var subscriptionLines []string
-	if err == nil {
-		for _, f := range files {
-			if f.ExpireAt == nil {
-				continue
-			}
-			if f.ExpireAt.After(now) && f.ExpireAt.Before(threeDaysLater) {
-				days := int(f.ExpireAt.Sub(now).Hours() / 24)
-				subscriptionLines = append(subscriptionLines, fmt.Sprintf("• %s: %d 天后到期", f.Name, days))
-			}
+	var lines []string
+	for _, f := range files {
+		if f.ExpireAt == nil {
+			continue
+		}
+		if f.ExpireAt.After(now) && f.ExpireAt.Before(threeDaysLater) {
+			days := int(f.ExpireAt.Sub(now).Hours() / 24)
+			lines = append(lines, fmt.Sprintf("• %s: %d 天后到期", f.Name, days))
 		}
 	}
-	if len(subscriptionLines) > 0 {
-		sections = append(sections, "— 订阅到期 —\n"+strings.Join(subscriptionLines, "\n"))
-	}
 
-	members, err := repo.ListParkingMembers(ctx)
-	if err != nil {
-		logger.Warn("[Notify] 获取车友到期数据失败", "error", err)
-	} else if lines := parkingExpiryLines(members, now); len(lines) > 0 {
-		sections = append(sections, "— 车友到期 —\n"+strings.Join(lines, "\n"))
-	}
-
-	if len(sections) == 0 {
+	if len(lines) == 0 {
 		return
 	}
 
-	msg := strings.Join(sections, "\n\n")
+	msg := strings.Join(lines, "\n")
 	_ = n.Send(ctx, notify.Event{
 		Type:    notify.EventExpiry,
-		Title:   "到期提醒",
+		Title:   "订阅即将到期",
 		Message: msg,
 	})
-}
-
-func parkingExpiryLines(members []storage.ParkingMember, now time.Time) []string {
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	var lines []string
-	for _, member := range members {
-		if member.Status != "active" {
-			continue
-		}
-		expire := time.Date(member.ExpireDate.Year(), member.ExpireDate.Month(), member.ExpireDate.Day(), 0, 0, 0, 0, start.Location())
-		days := int(expire.Sub(start).Hours() / 24)
-		if days > 30 {
-			continue
-		}
-
-		status := ""
-		switch {
-		case days < 0:
-			status = fmt.Sprintf("已过期 %d 天", -days)
-		case days == 0:
-			status = "今日到期"
-		default:
-			status = fmt.Sprintf("%d 天后到期", days)
-		}
-
-		space := strings.TrimSpace(strings.Join([]string{member.SpaceName, member.SlotLabel}, " "))
-		if space == "" {
-			space = "未填车位"
-		}
-		contact := strings.TrimSpace(member.Telegram)
-		if contact == "" {
-			contact = strings.TrimSpace(member.Contact)
-		}
-		if contact == "" {
-			contact = "未填联系方式"
-		}
-		carPlate := strings.TrimSpace(member.CarPlate)
-		if carPlate == "" {
-			carPlate = "未填车牌"
-		}
-
-		lines = append(lines, fmt.Sprintf("• %s（%s，%s）: %s，联系 %s",
-			telegramMarkdownText(member.Name),
-			telegramMarkdownText(space),
-			telegramMarkdownText(carPlate),
-			status,
-			telegramMarkdownText(contact),
-		))
-	}
-	return lines
-}
-
-func telegramMarkdownText(value string) string {
-	replacer := strings.NewReplacer(
-		"\\", "\\\\",
-		"_", "\\_",
-		"*", "\\*",
-		"[", "\\[",
-		"`", "\\`",
-	)
-	return replacer.Replace(value)
 }

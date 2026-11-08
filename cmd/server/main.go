@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"miaomiaowu/internal/auth"
+	"miaomiaowu/internal/backupstore"
 	"miaomiaowu/internal/captcha"
 	"miaomiaowu/internal/handler"
 	"miaomiaowu/internal/logger"
-	"miaomiaowu/internal/notify"
 	"miaomiaowu/internal/patches"
 	"miaomiaowu/internal/proxygroups"
 	"miaomiaowu/internal/storage"
@@ -54,6 +54,8 @@ func main() {
 
 	tokenStore := auth.NewTokenStore(24 * time.Hour)
 	twoFactorStore := auth.NewTwoFactorPendingStore(5 * time.Minute)
+	// passkey 仪式的 challenge:一次性、进程内、5 分钟过期(与 2FA 同口径)。
+	passkeySessionStore := auth.NewWebAuthnSessionStore(5 * time.Minute)
 
 	// Load persisted sessions from database
 	ctx := context.Background()
@@ -128,20 +130,15 @@ func main() {
 	// 初始化通知模块
 	sysCfg, _ := repo.GetSystemConfig(context.Background())
 	handler.SetBlockUnknownSubscriptionUA(sysCfg.BlockUnknownSubUA)
-	handler.InitNotifier(notify.Config{
-		Enabled:                sysCfg.NotifyEnabled,
-		BotToken:               sysCfg.TelegramBotToken,
-		ChatID:                 sysCfg.TelegramChatID,
-		NotifySubscribeFetch:   sysCfg.NotifySubscribeFetch,
-		NotifyLogin:            sysCfg.NotifyLogin,
-		NotifyIPBan:            sysCfg.NotifyIPBan,
-		NotifySilentMode:       sysCfg.NotifySilentMode,
-		NotifyDailyTraffic:     sysCfg.NotifyDailyTraffic,
-		NotifyExpiry:           sysCfg.NotifyExpiry,
-		NotifyNodeProbeOffline: sysCfg.NotifyNodeProbeOffline,
-		NotifyNodeProbeOnline:  sysCfg.NotifyNodeProbeOnline,
-		DailyTrafficTime:       sysCfg.NotifyDailyTrafficTime,
-	})
+	if allowList, err := repo.GetSystemSetting(context.Background(), handler.SSRFAllowListSettingKey); err == nil {
+		handler.SetSSRFAllowList(allowList)
+	}
+	handler.InitNotifier(handler.BuildNotifyConfig(context.Background(), repo, sysCfg))
+	// 额外推送渠道(邮件 / Server酱 / 飞书 / 钉钉 / Bark …)与发送状态回写
+	handler.AttachNotifyStatusSink(repo)
+	if err := handler.ReloadNotifyChannels(context.Background(), repo); err != nil {
+		logger.Warn("加载推送渠道失败", "error", err)
+	}
 
 	// 启动时初始化代理集合缓存
 	go handler.InitProxyProviderCacheOnStartup(repo)
@@ -171,6 +168,10 @@ func main() {
 	mux.Handle("/api/login", handler.NewLoginHandler(authManager, tokenStore, repo, loginRateLimiter, twoFactorStore, turnstileVerifier))
 	mux.Handle("/api/login/2fa", handler.NewTwoFactorLoginHandler(tokenStore, repo, twoFactorStore))
 	mux.Handle("/api/login/recovery", handler.NewRecoveryLoginHandler(tokenStore, repo, twoFactorStore))
+	// passkey 无密码登录:begin 不需要用户名(discoverable),finish 校验签名后直接签发登录态。
+	passkeyLoginHandler := handler.NewPasskeyLoginHandler(tokenStore, repo, passkeySessionStore, loginRateLimiter)
+	mux.Handle("/api/login/passkey/begin", passkeyLoginHandler)
+	mux.Handle("/api/login/passkey/finish", passkeyLoginHandler)
 
 	// Admin-only endpoints
 	mux.Handle("/api/admin/credentials", auth.RequireAdmin(tokenStore, userRepo, handler.NewCredentialsHandler(authManager, tokenStore)))
@@ -181,13 +182,18 @@ func main() {
 	mux.Handle("/api/admin/users/reset-password", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserResetPasswordHandler(repo)))
 	mux.Handle("/api/admin/users/remark", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserRemarkHandler(repo)))
 	mux.Handle("/api/admin/users/custom-short-code", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserCustomShortCodeHandler(repo)))
+	// 订阅获取开关:关掉某个用户的全部订阅链接,支持限时打开到期自动关(见 handler/subscription_fetch.go)
+	mux.Handle("/api/admin/users/subscription-fetch", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserSubscriptionFetchHandler(repo)))
 	mux.Handle("/api/admin/users/", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserSubscriptionsHandler(repo)))
-	mux.Handle("/api/admin/parking/", auth.RequireAdmin(tokenStore, userRepo, handler.NewParkingHandler(repo)))
 	securityLogHandler := handler.NewSecurityLogHandler(repo)
 	mux.Handle("/api/admin/security/", auth.RequireAdmin(tokenStore, userRepo, securityLogHandler))
 	mux.Handle("/api/admin/security/turnstile", auth.RequireAdmin(tokenStore, userRepo, handler.NewTurnstileSettingsHandler(repo)))
+	mux.Handle("/api/admin/security/fetch-allowlist", auth.RequireAdmin(tokenStore, userRepo, handler.NewSSRFAllowListSettingsHandler(repo)))
 	mux.Handle("/api/admin/tasks/", auth.RequireAdmin(tokenStore, userRepo, handler.NewTaskLogHandler(repo)))
 	mux.Handle("/api/admin/operations", auth.RequireAdmin(tokenStore, userRepo, handler.NewOperationLogHandler(repo)))
+	// 主控自身日志查看与日志文件管理（data/logs）
+	mux.Handle("/api/admin/logs/system", auth.RequireAdmin(tokenStore, userRepo, handler.NewSystemLogHandler()))
+	mux.Handle("/api/admin/logs/files", auth.RequireAdmin(tokenStore, userRepo, handler.NewLogFilesHandler()))
 	mux.Handle("/api/admin/subscriptions", auth.RequireAdmin(tokenStore, userRepo, handler.NewSubscriptionAdminHandler(subscribeDir, repo)))
 	mux.Handle("/api/admin/subscriptions/", auth.RequireAdmin(tokenStore, userRepo, handler.NewSubscriptionAdminHandler(subscribeDir, repo)))
 	mux.Handle("/api/admin/subscribe-files", auth.RequireAdmin(tokenStore, userRepo, handler.NewSubscribeFilesHandler(repo)))
@@ -199,6 +205,9 @@ func main() {
 	mux.Handle("/api/admin/rule-templates/", auth.RequireToken(tokenStore, handler.NewRuleTemplatesHandler(repo)))
 	mux.Handle("/api/user/default-template", auth.RequireToken(tokenStore, handler.NewUserDefaultTemplateHandler(repo)))
 	mux.Handle("/api/admin/template-v3/", auth.RequireAdmin(tokenStore, userRepo, handler.NewTemplateV3Handler(repo)))
+	// clash rule-provider → Loon 规则行的解析器。装在这里而不是转换模块里:
+	// 模块是纯函数不联网,而这边有 SSRF 安全的抓取客户端和缓存。
+	handler.InstallLoonRuleSetResolver()
 	mux.Handle("/api/admin/nodes", auth.RequireAdmin(tokenStore, userRepo, handler.NewNodesHandler(repo, subscribeDir)))
 	mux.Handle("/api/admin/nodes/", auth.RequireAdmin(tokenStore, userRepo, handler.NewNodesHandler(repo, subscribeDir)))
 	mux.Handle("/api/admin/sync-external-subscriptions", auth.RequireAdmin(tokenStore, userRepo, handler.NewSyncExternalSubscriptionsHandler(repo, subscribeDir)))
@@ -216,12 +225,27 @@ func main() {
 	mux.Handle("/api/admin/templates/fetch-source", auth.RequireAdmin(tokenStore, userRepo, handler.NewTemplateFetchSourceHandler()))
 	mux.Handle("/api/admin/backup/download", auth.RequireAdmin(tokenStore, userRepo, handler.NewBackupDownloadHandler(repo)))
 	mux.Handle("/api/admin/backup/restore", auth.RequireAdmin(tokenStore, userRepo, handler.NewBackupRestoreHandler(repo)))
+	// 自动备份:定时打包 + 投递到 WebDAV / S3 兼容 / Google Drive + 按份数清理。
+	// 凭据用 data/backup_secret.key 里的种子派生的 key 加密后入库,读接口一律打码。
+	backupSeed, err := backupstore.LoadOrCreateMasterSeed(filepath.Join("data", "backup_secret.key"))
+	if err != nil {
+		logger.Error("备份密钥种子加载失败", "error", err)
+		os.Exit(1)
+	}
+	autoBackupHandler := handler.NewAutoBackupHandler(repo, backupSeed)
+	mux.Handle("/api/admin/backup/auto", auth.RequireAdmin(tokenStore, userRepo, autoBackupHandler))
+	mux.Handle("/api/admin/backup/auto/test", auth.RequireAdmin(tokenStore, userRepo, autoBackupHandler))
+	mux.Handle("/api/admin/backup/auto/run", auth.RequireAdmin(tokenStore, userRepo, autoBackupHandler))
 	mux.Handle("/api/admin/update/check", auth.RequireAdmin(tokenStore, userRepo, handler.NewUpdateCheckHandler()))
 	mux.Handle("/api/admin/update/apply", auth.RequireAdmin(tokenStore, userRepo, handler.NewUpdateApplyHandler()))
 	mux.Handle("/api/admin/update/apply-sse", auth.RequireAdmin(tokenStore, userRepo, handler.NewUpdateApplySSEHandler()))
 	mux.Handle("/api/admin/proxy-groups/sync", auth.RequireAdmin(tokenStore, userRepo, handler.NewProxyGroupsSyncHandler(repo, proxyGroupsStore)))
 	mux.Handle("/api/admin/notify-config", auth.RequireAdmin(tokenStore, userRepo, handler.NewNotifyConfigHandler(repo)))
 	mux.Handle("/api/admin/notify-config/", auth.RequireAdmin(tokenStore, userRepo, handler.NewNotifyConfigHandler(repo)))
+	// 推送渠道(邮件 SMTP / Server酱 / 飞书 / 钉钉 / Bark / 额外 Telegram),按事件分发
+	notifyChannelsHandler := auth.RequireAdmin(tokenStore, userRepo, handler.NewNotifyChannelsHandler(repo))
+	mux.Handle("/api/admin/notify-channels", notifyChannelsHandler)
+	mux.Handle("/api/admin/notify-channels/", notifyChannelsHandler)
 
 	// 面板壁纸 / 液态玻璃外观:配置变更时把壁纸 CSS、色调、降透明度同步进首屏注入(见 internal/web/handler.go)。
 	// 壁纸落盘到 data/wallpapers/,公开可读(登录页也在同一个玻璃壳里,背景要在登录前就正确)。
@@ -234,11 +258,21 @@ func main() {
 	syncPanelAppearance(handler.LoadPanelWallpaperConfig(ctx, repo)) // 启动预热
 	mux.Handle("/api/admin/system-settings/panel-wallpaper", auth.RequireAdmin(tokenStore, userRepo, systemSettingsHandler))
 	mux.Handle("/api/admin/system-settings/panel-wallpaper/upload", auth.RequireAdmin(tokenStore, userRepo, systemSettingsHandler))
+	// 菜单排序与显隐:读给所有登录用户(导航是每个人都渲染的),写只给管理员。
+	mux.Handle("/api/admin/system-settings/nav-menu", auth.RequireAdmin(tokenStore, userRepo, handler.NewNavMenuHandler(repo, true)))
 	mux.HandleFunc("/api/public/panel-wallpaper", systemSettingsHandler.GetPanelWallpaperPublic)
 	mux.HandleFunc("/wallpapers/", systemSettingsHandler.ServeWallpaperFile)
 
+	// PWA 开关:首屏 meta 与 /sw.js 跟着它走,启动时同步一次(见 internal/web/pwa.go)。
+	web.SetPWAEnabled(handler.LoadPWAEnabled(ctx, repo))
+	mux.Handle("/api/admin/system-settings/pwa", auth.RequireAdmin(tokenStore, userRepo, handler.NewPWASettingHandler(repo, web.SetPWAEnabled)))
+
 	// 仅本机访问开关(issue #106)。改后重启生效(监听地址启动时定死,见 getAddr)。
 	mux.Handle("/api/admin/access-control", auth.RequireAdmin(tokenStore, userRepo, handler.NewAccessControlHandler(repo)))
+
+	// 正规 CA 证书节点不固定证书指纹(从妙妙屋X 移植):订阅里 CA 签发证书的节点不钉证书、不跳过校验
+	handler.LoadCACertNoPin(context.Background(), repo)
+	mux.Handle("/api/admin/system-settings/ca-cert-no-pin", auth.RequireAdmin(tokenStore, userRepo, handler.NewCACertNoPinHandler(repo)))
 
 	// 规则集(clash rule-providers)托管:管理端 CRUD + 公开下载。
 	// 下载端点必须公开 —— 拉它的是 mihomo/clash 客户端,没有登录态;挂在 /rules/ 而非 /api/ 下。
@@ -258,12 +292,17 @@ func main() {
 	mux.Handle("/api/user/profile", auth.RequireToken(tokenStore, handler.NewProfileHandler(repo)))
 	mux.Handle("/api/user/settings", auth.RequireToken(tokenStore, handler.NewUserSettingsHandler(repo, tokenStore)))
 	mux.Handle("/api/user/config", auth.RequireToken(tokenStore, handler.NewUserConfigHandler(repo)))
+	mux.Handle("/api/user/nav-menu", auth.RequireToken(tokenStore, handler.NewNavMenuHandler(repo, false)))
 	mux.Handle("/api/user/2fa/status", auth.RequireToken(tokenStore, handler.NewTwoFactorStatusHandler(repo)))
 	mux.Handle("/api/user/2fa/setup", auth.RequireToken(tokenStore, handler.NewTwoFactorSetupHandler(authManager, repo)))
 	mux.Handle("/api/user/2fa/verify-setup", auth.RequireToken(tokenStore, handler.NewTwoFactorVerifySetupHandler(repo)))
 	mux.Handle("/api/user/2fa/disable", auth.RequireToken(tokenStore, handler.NewTwoFactorDisableHandler(authManager, repo)))
+	passkeyRegisterHandler := handler.NewPasskeyRegisterHandler(repo, passkeySessionStore)
+	mux.Handle("/api/user/passkey", auth.RequireToken(tokenStore, handler.NewPasskeyManageHandler(repo)))
+	mux.Handle("/api/user/passkey/register/begin", auth.RequireToken(tokenStore, passkeyRegisterHandler))
+	mux.Handle("/api/user/passkey/register/finish", auth.RequireToken(tokenStore, passkeyRegisterHandler))
 	mux.Handle("/api/user/token", auth.RequireToken(tokenStore, handler.NewUserTokenHandler(repo)))
-	mux.Handle("/api/user/external-subscriptions", auth.RequireToken(tokenStore, handler.NewExternalSubscriptionsHandler(repo)))
+	mux.Handle("/api/user/external-subscriptions", auth.RequireToken(tokenStore, handler.NewExternalSubscriptionsHandler(repo, subscribeDir)))
 	mux.Handle("/api/user/external-subscriptions/nodes", auth.RequireToken(tokenStore, handler.NewExternalSubscriptionNodesHandler(repo)))
 	mux.Handle("/api/user/external-subscriptions/check-filter", auth.RequireToken(tokenStore, handler.NewExternalSubscriptionCheckFilterHandler(repo)))
 	mux.Handle("/api/user/proxy-provider-configs", auth.RequireToken(tokenStore, handler.NewProxyProviderConfigsHandler(repo)))
@@ -303,12 +342,13 @@ func main() {
 	// 与 TCPing 互补 —— 那个只拨 server:port,握手失败/密码错/证书不对一概看不出来。
 	// store 必须在这里建好:路由和下面的调度器要共用同一个内存实例。
 	nodeProbeStore := handler.NewNodeProbeStore(0)
+	handler.SetNodeProbeStore(nodeProbeStore) // 订阅生成时按它过滤探测不可用的节点
 	mux.Handle("/api/admin/node-probe", auth.RequireAdmin(tokenStore, userRepo, handler.NewNodeProbeHandler(repo, nodeProbeStore)))
 	mux.Handle("/api/admin/node-probe/", auth.RequireAdmin(tokenStore, userRepo, handler.NewNodeProbeHandler(repo, nodeProbeStore)))
 
 	// Temporary subscription endpoints
 	mux.Handle("/api/admin/temp-subscription", auth.RequireAdmin(tokenStore, userRepo, handler.NewTempSubscriptionHandler()))
-	tempSubAccessHandler := handler.NewTempSubscriptionAccessHandler()
+	tempSubAccessHandler := handler.NewTempSubscriptionAccessHandler(repo)
 
 	// Combined handler for short links and web app
 	// 短链接默认为 3 + 3, 订阅code+用户code, 自定义最小为1+1, 不限制长度
@@ -386,6 +426,8 @@ func main() {
 	go startDatabaseLogCleanup(collectorCtx, repo)
 	go bruteForceProtector.StartCleanup(collectorCtx)
 	go startTrafficCollector(collectorCtx, trafficHandler)
+	autoBackupHandler.StartScheduler(collectorCtx)
+	go handler.StartCertProbeTrustRefresher(collectorCtx, repo)
 
 	notifyCtx, stopNotify := context.WithCancel(context.Background())
 	go handler.StartNotifyScheduler(notifyCtx, repo, trafficHandler)

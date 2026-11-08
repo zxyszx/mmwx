@@ -14,12 +14,13 @@ import (
 )
 
 type externalSubscriptionRequest struct {
-	Name                  string `json:"name"`
-	URL                   string `json:"url"`
-	UserAgent             string `json:"user_agent"`
-	TrafficMode           string `json:"traffic_mode"`            // 流量统计方式: "download", "upload", "both", "none"
-	AutoUpdate            *bool  `json:"auto_update"`             // 是否启用定时更新
-	UpdateIntervalMinutes *int   `json:"update_interval_minutes"` // 更新间隔（分钟）
+	Name                  string  `json:"name"`
+	URL                   string  `json:"url"`
+	UserAgent             string  `json:"user_agent"`
+	TrafficMode           string  `json:"traffic_mode"`            // 流量统计方式: "download", "upload", "both", "none"
+	AutoUpdate            *bool   `json:"auto_update"`             // 是否启用定时更新
+	UpdateIntervalMinutes *int    `json:"update_interval_minutes"` // 更新间隔（分钟）
+	NamePrefix            *string `json:"name_prefix"`             // 节点展示名前缀；nil 表示不修改（更新时保留原值）
 }
 
 type externalSubscriptionResponse struct {
@@ -36,8 +37,18 @@ type externalSubscriptionResponse struct {
 	TrafficMode           string  `json:"traffic_mode"` // 流量统计方式: "download", "upload", "both", "none"
 	AutoUpdate            bool    `json:"auto_update"`
 	UpdateIntervalMinutes int     `json:"update_interval_minutes"`
+	NamePrefix            string  `json:"name_prefix"`
 	CreatedAt             string  `json:"created_at"`
 	UpdatedAt             string  `json:"updated_at"`
+}
+
+// namePrefixFromRequest returns the caller-supplied prefix, or fallback when the field is omitted.
+// The stored string is kept as-is so a trailing space (for example "[机场A] ") is significant.
+func namePrefixFromRequest(prefix *string, fallback string) string {
+	if prefix == nil {
+		return fallback
+	}
+	return *prefix
 }
 
 func normalizeUpdateIntervalMinutes(minutes int) int {
@@ -95,12 +106,13 @@ func toExternalSubscriptionResponse(sub storage.ExternalSubscription) externalSu
 		TrafficMode:           sub.TrafficMode,
 		AutoUpdate:            sub.AutoUpdate,
 		UpdateIntervalMinutes: sub.UpdateIntervalMinutes,
+		NamePrefix:            sub.NamePrefix,
 		CreatedAt:             sub.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:             sub.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
-func NewExternalSubscriptionsHandler(repo *storage.TrafficRepository) http.Handler {
+func NewExternalSubscriptionsHandler(repo *storage.TrafficRepository, subscribeDir string) http.Handler {
 	if repo == nil {
 		panic("external subscriptions handler requires repository")
 	}
@@ -118,7 +130,7 @@ func NewExternalSubscriptionsHandler(repo *storage.TrafficRepository) http.Handl
 		case http.MethodPost:
 			handleCreateExternalSubscription(w, r, repo, username)
 		case http.MethodPut:
-			handleUpdateExternalSubscription(w, r, repo, username)
+			handleUpdateExternalSubscription(w, r, repo, username, subscribeDir)
 		case http.MethodDelete:
 			handleDeleteExternalSubscription(w, r, repo, username)
 		default:
@@ -240,6 +252,7 @@ func handleCreateExternalSubscription(w http.ResponseWriter, r *http.Request, re
 		Expire:                trafficExpire,
 		AutoUpdate:            autoUpdate,
 		UpdateIntervalMinutes: updateInterval,
+		NamePrefix:            namePrefixFromRequest(payload.NamePrefix, ""),
 	}
 
 	id, err := repo.CreateExternalSubscription(r.Context(), sub)
@@ -259,6 +272,9 @@ func handleCreateExternalSubscription(w http.ResponseWriter, r *http.Request, re
 				existing.TrafficMode = payload.TrafficMode
 			}
 			existing.AutoUpdate, existing.UpdateIntervalMinutes = resolveAutoUpdateSettings(payload, existing.AutoUpdate, existing.UpdateIntervalMinutes)
+			if payload.NamePrefix != nil {
+				existing.NamePrefix = *payload.NamePrefix
+			}
 			if trafficTotal > 0 || trafficUpload > 0 || trafficDownload > 0 {
 				existing.Upload = trafficUpload
 				existing.Download = trafficDownload
@@ -294,7 +310,7 @@ func handleCreateExternalSubscription(w http.ResponseWriter, r *http.Request, re
 	_ = json.NewEncoder(w).Encode(toExternalSubscriptionResponse(created))
 }
 
-func handleUpdateExternalSubscription(w http.ResponseWriter, r *http.Request, repo *storage.TrafficRepository, username string) {
+func handleUpdateExternalSubscription(w http.ResponseWriter, r *http.Request, repo *storage.TrafficRepository, username, subscribeDir string) {
 	idStr := r.URL.Query().Get("id")
 	if idStr == "" {
 		writeError(w, http.StatusBadRequest, errors.New("subscription id is required"))
@@ -342,6 +358,18 @@ func handleUpdateExternalSubscription(w http.ResponseWriter, r *http.Request, re
 	}
 
 	autoUpdate, updateInterval := resolveAutoUpdateSettings(payload, existing.AutoUpdate, existing.UpdateIntervalMinutes)
+	newPrefix := namePrefixFromRequest(payload.NamePrefix, existing.NamePrefix)
+	appliedPrefix := existing.AppliedNamePrefix
+	// 前缀没变就不要动节点。变了则立刻改这一订阅的展示名，成功后再推进已应用前缀。
+	// 节点仍挂在旧地址上，所以即使用户同时改了 URL，也按保存前的地址找节点。
+	if newPrefix != existing.NamePrefix {
+		nextApplied, err := renameExternalSubscriptionNodePrefixes(r.Context(), repo, username, existing.URL, existing.AppliedNamePrefix, newPrefix, subscribeDir)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		appliedPrefix = nextApplied
+	}
 
 	sub := storage.ExternalSubscription{
 		ID:                    id,
@@ -358,6 +386,8 @@ func handleUpdateExternalSubscription(w http.ResponseWriter, r *http.Request, re
 		Expire:                existing.Expire,
 		AutoUpdate:            autoUpdate,
 		UpdateIntervalMinutes: updateInterval,
+		NamePrefix:            newPrefix,
+		AppliedNamePrefix:     appliedPrefix,
 	}
 
 	if err := repo.UpdateExternalSubscription(r.Context(), sub); err != nil {

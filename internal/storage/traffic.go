@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,8 +41,7 @@ type TrafficRecord struct {
 
 // TrafficRepository manages persistence of traffic usage snapshots.
 type TrafficRepository struct {
-	db         *sql.DB
-	parkingKey []byte
+	db *sql.DB
 }
 
 // SubscriptionLink represents a configurable subscription entry exposed to clients.
@@ -278,6 +276,11 @@ type UserSettings struct {
 	DebugStartedAt               *time.Time // When debug logging was started
 	CreatedAt                    time.Time
 	UpdatedAt                    time.Time
+
+	// DefaultQXTemplateFilename / DefaultSingboxTemplateFilename 与上面的 Surge / Loon 同义,
+	// 分别给 Quantumult X(.qx)与 sing-box(.json)。sing-box 留空 = 订阅不套模板,只下发节点(原行为)。
+	DefaultQXTemplateFilename      string
+	DefaultSingboxTemplateFilename string
 }
 
 // SystemConfig represents global system configuration shared across all users.
@@ -340,6 +343,8 @@ type ExternalSubscription struct {
 	TrafficMode           string     // 流量统计方式: "download", "upload", "both", "none"
 	AutoUpdate            bool       // 是否定时自动更新此订阅
 	UpdateIntervalMinutes int        // 定时更新间隔（分钟），>0 且 AutoUpdate 时生效
+	NamePrefix            string     // 期望的节点展示名前缀；空字符串表示不加前缀
+	AppliedNamePrefix     string     // 已经写在节点名上的展示前缀。保存并完成即时改名后与 NamePrefix 对齐；同步仍用它把旧展示名还原成机场原始名
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 }
@@ -446,51 +451,13 @@ func NewTrafficRepository(path string) (*TrafficRepository, error) {
 		return nil, fmt.Errorf("set sqlite journal size limit: %w", err)
 	}
 
-	parkingKey, err := loadParkingEncryptionKey(path)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	repo := &TrafficRepository{db: db, parkingKey: parkingKey}
+	repo := &TrafficRepository{db: db}
 	if err := repo.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 
 	return repo, nil
-}
-
-func loadParkingEncryptionKey(dbPath string) ([]byte, error) {
-	if encoded := strings.TrimSpace(os.Getenv("PARKING_ENCRYPTION_KEY")); encoded != "" {
-		key, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil || len(key) != 32 {
-			return nil, errors.New("PARKING_ENCRYPTION_KEY must be base64-encoded 32 bytes")
-		}
-		return key, nil
-	}
-
-	if dbPath == ":memory:" || strings.HasPrefix(dbPath, "file:") {
-		key := make([]byte, 32)
-		_, err := rand.Read(key)
-		return key, err
-	}
-	keyPath := filepath.Join(filepath.Dir(dbPath), ".parking.key")
-	if key, err := os.ReadFile(keyPath); err == nil {
-		if len(key) != 32 {
-			return nil, fmt.Errorf("invalid parking encryption key length in %s", keyPath)
-		}
-		return key, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("read parking encryption key: %w", err)
-	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("generate parking encryption key: %w", err)
-	}
-	if err := os.WriteFile(keyPath, key, 0o600); err != nil {
-		return nil, fmt.Errorf("write parking encryption key: %w", err)
-	}
-	return key, nil
 }
 
 // Close releases the underlying database resources.
@@ -663,6 +630,33 @@ CREATE TABLE IF NOT EXISTS users (
 	if err := r.ensureUserColumn("recovery_codes", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
+	// 订阅获取开关(on / off),见 subscription_fetch.go。默认 on,存量用户补列后全部是开。
+	if err := r.ensureUserColumn("subscription_fetch", "TEXT NOT NULL DEFAULT 'on'"); err != nil {
+		return err
+	}
+	// 限时打开的到期时刻(unix 秒,0 = 不限时),#1497。
+	if err := r.ensureUserColumn("subscription_fetch_until", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// passkey(WebAuthn)凭据。一个用户可有多把,故独立成表而不是像 totp_secret 那样加列。
+	// credential 列存 webauthn.Credential 的完整 JSON,详见 webauthn_credentials.go 的说明。
+	const webauthnCredentialsSchema = `
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    credential_id TEXT NOT NULL UNIQUE,
+    credential TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    aaguid TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_username ON webauthn_credentials(username);
+`
+	if _, err := r.db.Exec(webauthnCredentialsSchema); err != nil {
+		return fmt.Errorf("migrate webauthn credentials: %w", err)
+	}
 
 	const historySchema = `
 CREATE TABLE IF NOT EXISTS rule_versions (
@@ -815,6 +809,10 @@ CREATE INDEX IF NOT EXISTS idx_nodes_enabled ON nodes(enabled);
 	if err := r.ensureNodeColumn("probe_enabled", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// 节点管理列表里「隐藏」:只影响管理页显示,不影响订阅 / 下发。默认 0。
+	if err := r.ensureNodeColumn("hidden", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// Create tag index after ensuring column exists
 	if _, err := r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_tag ON nodes(tag);`); err != nil {
@@ -955,6 +953,23 @@ CREATE INDEX IF NOT EXISTS idx_external_subscriptions_url ON external_subscripti
 	if err := r.ensureExternalSubscriptionColumn("update_interval_minutes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := r.ensureExternalSubscriptionColumn("name_prefix", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	appliedPrefixExisted, err := r.externalSubscriptionColumnExists("applied_name_prefix")
+	if err != nil {
+		return err
+	}
+	if err := r.ensureExternalSubscriptionColumn("applied_name_prefix", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// 只在新增列时回填一次：当时库里的 name_prefix 就是已经（或即将）写在节点上的前缀。
+	// 之后用户修改 name_prefix 不会再覆盖 applied_name_prefix，否则 A→B 时旧前缀会丢。
+	if !appliedPrefixExisted {
+		if _, err := r.db.Exec(`UPDATE external_subscriptions SET applied_name_prefix = name_prefix WHERE COALESCE(applied_name_prefix, '') = '' AND COALESCE(name_prefix, '') != ''`); err != nil {
+			return fmt.Errorf("backfill applied_name_prefix: %w", err)
+		}
+	}
 
 	// Add custom_rules_enabled to user_settings table
 	if err := r.ensureUserSettingsColumn("custom_rules_enabled", "INTEGER NOT NULL DEFAULT 0"); err != nil {
@@ -1015,6 +1030,12 @@ CREATE INDEX IF NOT EXISTS idx_external_subscriptions_url ON external_subscripti
 		return err
 	}
 	if err := r.ensureUserSettingsColumn("default_loon_template_filename", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := r.ensureUserSettingsColumn("default_qx_template_filename", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := r.ensureUserSettingsColumn("default_singbox_template_filename", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 
@@ -1413,10 +1434,6 @@ CREATE TABLE IF NOT EXISTS rule_providers (
 	}
 
 	if err := r.migrateLogTables(); err != nil {
-		return err
-	}
-
-	if err := r.migrateParkingTables(); err != nil {
 		return err
 	}
 
@@ -2199,6 +2216,35 @@ func (r *TrafficRepository) ensureSubscribeFileColumn(name, definition string) e
 	}
 
 	return nil
+}
+
+func (r *TrafficRepository) externalSubscriptionColumnExists(name string) (bool, error) {
+	rows, err := r.db.Query(`PRAGMA table_info(external_subscriptions)`)
+	if err != nil {
+		return false, fmt.Errorf("external_subscriptions table info: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			colName    string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &colName, &colType, &notNull, &defaultVal, &pk); err != nil {
+			return false, fmt.Errorf("scan table info: %w", err)
+		}
+		if strings.EqualFold(colName, name) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate table info: %w", err)
+	}
+	return false, nil
 }
 
 func (r *TrafficRepository) ensureExternalSubscriptionColumn(name, definition string) error {
@@ -3337,6 +3383,12 @@ func (r *TrafficRepository) DeleteUser(ctx context.Context, username string) err
 		return fmt.Errorf("delete user sessions: %w", err)
 	}
 
+	// 删号时清掉他的 passkey
+	_, err = tx.ExecContext(ctx, `DELETE FROM webauthn_credentials WHERE username = ?`, username)
+	if err != nil {
+		return fmt.Errorf("delete user webauthn credentials: %w", err)
+	}
+
 	// Delete user's nodes
 	_, err = tx.ExecContext(ctx, `DELETE FROM nodes WHERE username = ?`, username)
 	if err != nil {
@@ -3880,11 +3932,11 @@ func (r *TrafficRepository) GetUserSettings(ctx context.Context, username string
 		return settings, errors.New("username is required")
 	}
 
-	const stmt = `SELECT username, force_sync_external, COALESCE(match_rule, 'node_name'), COALESCE(sync_scope, 'saved_only'), COALESCE(keep_node_name, 1), COALESCE(cache_expire_minutes, 0), COALESCE(sync_traffic, 0), COALESCE(enable_probe_binding, 0), COALESCE(custom_rules_enabled, 0), COALESCE(template_version, 'v2'), COALESCE(enable_proxy_provider, 0), COALESCE(node_order, '[]'), COALESCE(node_name_filter, '剩余|流量|到期|订阅|时间|重置'), COALESCE(append_sub_info, 0), COALESCE(default_template_filename, ''), COALESCE(default_surge_template_filename, ''), COALESCE(default_loon_template_filename, ''), COALESCE(debug_enabled, 0), COALESCE(debug_log_path, ''), debug_started_at, created_at, updated_at FROM user_settings WHERE username = ? LIMIT 1`
+	const stmt = `SELECT username, force_sync_external, COALESCE(match_rule, 'node_name'), COALESCE(sync_scope, 'saved_only'), COALESCE(keep_node_name, 1), COALESCE(cache_expire_minutes, 0), COALESCE(sync_traffic, 0), COALESCE(enable_probe_binding, 0), COALESCE(custom_rules_enabled, 0), COALESCE(template_version, 'v2'), COALESCE(enable_proxy_provider, 0), COALESCE(node_order, '[]'), COALESCE(node_name_filter, '剩余|流量|到期|订阅|时间|重置'), COALESCE(append_sub_info, 0), COALESCE(default_template_filename, ''), COALESCE(default_surge_template_filename, ''), COALESCE(default_loon_template_filename, ''), COALESCE(default_qx_template_filename, ''), COALESCE(default_singbox_template_filename, ''), COALESCE(debug_enabled, 0), COALESCE(debug_log_path, ''), debug_started_at, created_at, updated_at FROM user_settings WHERE username = ? LIMIT 1`
 	var forceSyncInt, keepNodeNameInt, syncTrafficInt, enableProbeBindingInt, customRulesEnabledInt, enableProxyProviderInt, appendSubInfoInt, debugEnabledInt int
 	var nodeOrderJSON string
 	var debugStartedAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, stmt, username).Scan(&settings.Username, &forceSyncInt, &settings.MatchRule, &settings.SyncScope, &keepNodeNameInt, &settings.CacheExpireMinutes, &syncTrafficInt, &enableProbeBindingInt, &customRulesEnabledInt, &settings.TemplateVersion, &enableProxyProviderInt, &nodeOrderJSON, &settings.NodeNameFilter, &appendSubInfoInt, &settings.DefaultTemplateFilename, &settings.DefaultSurgeTemplateFilename, &settings.DefaultLoonTemplateFilename, &debugEnabledInt, &settings.DebugLogPath, &debugStartedAt, &settings.CreatedAt, &settings.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, stmt, username).Scan(&settings.Username, &forceSyncInt, &settings.MatchRule, &settings.SyncScope, &keepNodeNameInt, &settings.CacheExpireMinutes, &syncTrafficInt, &enableProbeBindingInt, &customRulesEnabledInt, &settings.TemplateVersion, &enableProxyProviderInt, &nodeOrderJSON, &settings.NodeNameFilter, &appendSubInfoInt, &settings.DefaultTemplateFilename, &settings.DefaultSurgeTemplateFilename, &settings.DefaultLoonTemplateFilename, &settings.DefaultQXTemplateFilename, &settings.DefaultSingboxTemplateFilename, &debugEnabledInt, &settings.DebugLogPath, &debugStartedAt, &settings.CreatedAt, &settings.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return settings, ErrUserSettingsNotFound
@@ -4007,8 +4059,8 @@ func (r *TrafficRepository) UpsertUserSettings(ctx context.Context, settings Use
 	}
 
 	const stmt = `
-		INSERT INTO user_settings (username, force_sync_external, match_rule, sync_scope, keep_node_name, cache_expire_minutes, sync_traffic, enable_probe_binding, custom_rules_enabled, template_version, enable_proxy_provider, node_order, node_name_filter, append_sub_info, default_template_filename, default_surge_template_filename, default_loon_template_filename, debug_enabled, debug_log_path, debug_started_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO user_settings (username, force_sync_external, match_rule, sync_scope, keep_node_name, cache_expire_minutes, sync_traffic, enable_probe_binding, custom_rules_enabled, template_version, enable_proxy_provider, node_order, node_name_filter, append_sub_info, default_template_filename, default_surge_template_filename, default_loon_template_filename, default_qx_template_filename, default_singbox_template_filename, debug_enabled, debug_log_path, debug_started_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(username) DO UPDATE SET
 			force_sync_external = excluded.force_sync_external,
 			match_rule = excluded.match_rule,
@@ -4026,13 +4078,15 @@ func (r *TrafficRepository) UpsertUserSettings(ctx context.Context, settings Use
 			default_template_filename = excluded.default_template_filename,
 			default_surge_template_filename = excluded.default_surge_template_filename,
 			default_loon_template_filename = excluded.default_loon_template_filename,
+			default_qx_template_filename = excluded.default_qx_template_filename,
+			default_singbox_template_filename = excluded.default_singbox_template_filename,
 			debug_enabled = excluded.debug_enabled,
 			debug_log_path = excluded.debug_log_path,
 			debug_started_at = excluded.debug_started_at,
 			updated_at = CURRENT_TIMESTAMP
 	`
 
-	if _, err := r.db.ExecContext(ctx, stmt, username, forceSyncInt, matchRule, syncScope, keepNodeNameInt, cacheExpireMinutes, syncTrafficInt, enableProbeBindingInt, customRulesEnabledInt, templateVersion, enableProxyProviderInt, nodeOrderJSON, nodeNameFilter, appendSubInfoInt, settings.DefaultTemplateFilename, settings.DefaultSurgeTemplateFilename, settings.DefaultLoonTemplateFilename, debugEnabledInt, settings.DebugLogPath, settings.DebugStartedAt); err != nil {
+	if _, err := r.db.ExecContext(ctx, stmt, username, forceSyncInt, matchRule, syncScope, keepNodeNameInt, cacheExpireMinutes, syncTrafficInt, enableProbeBindingInt, customRulesEnabledInt, templateVersion, enableProxyProviderInt, nodeOrderJSON, nodeNameFilter, appendSubInfoInt, settings.DefaultTemplateFilename, settings.DefaultSurgeTemplateFilename, settings.DefaultLoonTemplateFilename, settings.DefaultQXTemplateFilename, settings.DefaultSingboxTemplateFilename, debugEnabledInt, settings.DebugLogPath, settings.DebugStartedAt); err != nil {
 		return fmt.Errorf("upsert user settings: %w", err)
 	}
 
@@ -4050,7 +4104,7 @@ func (r *TrafficRepository) ListExternalSubscriptions(ctx context.Context, usern
 		return nil, errors.New("username is required")
 	}
 
-	const stmt = `SELECT id, username, name, url, COALESCE(user_agent, 'clash-meta/2.4.0'), node_count, last_sync_at, COALESCE(upload, 0), COALESCE(download, 0), COALESCE(total, 0), expire, COALESCE(traffic_mode, 'both'), COALESCE(auto_update, 0), COALESCE(update_interval_minutes, 0), created_at, updated_at FROM external_subscriptions WHERE username = ? ORDER BY created_at DESC`
+	const stmt = `SELECT id, username, name, COALESCE(name_prefix, ''), COALESCE(applied_name_prefix, ''), url, COALESCE(user_agent, 'clash-meta/2.4.0'), node_count, last_sync_at, COALESCE(upload, 0), COALESCE(download, 0), COALESCE(total, 0), expire, COALESCE(traffic_mode, 'both'), COALESCE(auto_update, 0), COALESCE(update_interval_minutes, 0), created_at, updated_at FROM external_subscriptions WHERE username = ? ORDER BY created_at DESC`
 	rows, err := r.db.QueryContext(ctx, stmt, username)
 	if err != nil {
 		return nil, fmt.Errorf("list external subscriptions: %w", err)
@@ -4062,7 +4116,7 @@ func (r *TrafficRepository) ListExternalSubscriptions(ctx context.Context, usern
 		var sub ExternalSubscription
 		var lastSyncAt, expire sql.NullTime
 		var autoUpdate int
-		if err := rows.Scan(&sub.ID, &sub.Username, &sub.Name, &sub.URL, &sub.UserAgent, &sub.NodeCount, &lastSyncAt, &sub.Upload, &sub.Download, &sub.Total, &expire, &sub.TrafficMode, &autoUpdate, &sub.UpdateIntervalMinutes, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+		if err := rows.Scan(&sub.ID, &sub.Username, &sub.Name, &sub.NamePrefix, &sub.AppliedNamePrefix, &sub.URL, &sub.UserAgent, &sub.NodeCount, &lastSyncAt, &sub.Upload, &sub.Download, &sub.Total, &expire, &sub.TrafficMode, &autoUpdate, &sub.UpdateIntervalMinutes, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan external subscription: %w", err)
 		}
 		sub.AutoUpdate = autoUpdate != 0
@@ -4098,10 +4152,10 @@ func (r *TrafficRepository) GetExternalSubscription(ctx context.Context, id int6
 		return sub, errors.New("username is required")
 	}
 
-	const stmt = `SELECT id, username, name, url, COALESCE(user_agent, 'clash-meta/2.4.0'), node_count, last_sync_at, COALESCE(upload, 0), COALESCE(download, 0), COALESCE(total, 0), expire, COALESCE(traffic_mode, 'both'), COALESCE(auto_update, 0), COALESCE(update_interval_minutes, 0), created_at, updated_at FROM external_subscriptions WHERE id = ? AND username = ? LIMIT 1`
+	const stmt = `SELECT id, username, name, COALESCE(name_prefix, ''), COALESCE(applied_name_prefix, ''), url, COALESCE(user_agent, 'clash-meta/2.4.0'), node_count, last_sync_at, COALESCE(upload, 0), COALESCE(download, 0), COALESCE(total, 0), expire, COALESCE(traffic_mode, 'both'), COALESCE(auto_update, 0), COALESCE(update_interval_minutes, 0), created_at, updated_at FROM external_subscriptions WHERE id = ? AND username = ? LIMIT 1`
 	var lastSyncAt, expire sql.NullTime
 	var autoUpdate int
-	err := r.db.QueryRowContext(ctx, stmt, id, username).Scan(&sub.ID, &sub.Username, &sub.Name, &sub.URL, &sub.UserAgent, &sub.NodeCount, &lastSyncAt, &sub.Upload, &sub.Download, &sub.Total, &expire, &sub.TrafficMode, &autoUpdate, &sub.UpdateIntervalMinutes, &sub.CreatedAt, &sub.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, stmt, id, username).Scan(&sub.ID, &sub.Username, &sub.Name, &sub.NamePrefix, &sub.AppliedNamePrefix, &sub.URL, &sub.UserAgent, &sub.NodeCount, &lastSyncAt, &sub.Upload, &sub.Download, &sub.Total, &expire, &sub.TrafficMode, &autoUpdate, &sub.UpdateIntervalMinutes, &sub.CreatedAt, &sub.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return sub, ErrExternalSubscriptionNotFound
@@ -4136,10 +4190,10 @@ func (r *TrafficRepository) GetExternalSubscriptionByURL(ctx context.Context, us
 		return sub, errors.New("subscription url is required")
 	}
 
-	const stmt = `SELECT id, username, name, url, COALESCE(user_agent, 'clash-meta/2.4.0'), node_count, last_sync_at, COALESCE(upload, 0), COALESCE(download, 0), COALESCE(total, 0), expire, COALESCE(traffic_mode, 'both'), COALESCE(auto_update, 0), COALESCE(update_interval_minutes, 0), created_at, updated_at FROM external_subscriptions WHERE username = ? AND url = ? LIMIT 1`
+	const stmt = `SELECT id, username, name, COALESCE(name_prefix, ''), COALESCE(applied_name_prefix, ''), url, COALESCE(user_agent, 'clash-meta/2.4.0'), node_count, last_sync_at, COALESCE(upload, 0), COALESCE(download, 0), COALESCE(total, 0), expire, COALESCE(traffic_mode, 'both'), COALESCE(auto_update, 0), COALESCE(update_interval_minutes, 0), created_at, updated_at FROM external_subscriptions WHERE username = ? AND url = ? LIMIT 1`
 	var lastSyncAt, expire sql.NullTime
 	var autoUpdate int
-	err := r.db.QueryRowContext(ctx, stmt, username, url).Scan(&sub.ID, &sub.Username, &sub.Name, &sub.URL, &sub.UserAgent, &sub.NodeCount, &lastSyncAt, &sub.Upload, &sub.Download, &sub.Total, &expire, &sub.TrafficMode, &autoUpdate, &sub.UpdateIntervalMinutes, &sub.CreatedAt, &sub.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, stmt, username, url).Scan(&sub.ID, &sub.Username, &sub.Name, &sub.NamePrefix, &sub.AppliedNamePrefix, &sub.URL, &sub.UserAgent, &sub.NodeCount, &lastSyncAt, &sub.Upload, &sub.Download, &sub.Total, &expire, &sub.TrafficMode, &autoUpdate, &sub.UpdateIntervalMinutes, &sub.CreatedAt, &sub.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return sub, ErrExternalSubscriptionNotFound
@@ -4196,8 +4250,8 @@ func (r *TrafficRepository) CreateExternalSubscription(ctx context.Context, sub 
 		updateInterval = 0
 	}
 
-	const stmt = `INSERT INTO external_subscriptions (username, name, url, user_agent, node_count, last_sync_at, upload, download, total, expire, traffic_mode, auto_update, update_interval_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	result, err := r.db.ExecContext(ctx, stmt, username, name, url, userAgent, sub.NodeCount, sub.LastSyncAt, sub.Upload, sub.Download, sub.Total, sub.Expire, trafficMode, autoUpdate, updateInterval)
+	const stmt = `INSERT INTO external_subscriptions (username, name, name_prefix, applied_name_prefix, url, user_agent, node_count, last_sync_at, upload, download, total, expire, traffic_mode, auto_update, update_interval_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	result, err := r.db.ExecContext(ctx, stmt, username, name, sub.NamePrefix, sub.AppliedNamePrefix, url, userAgent, sub.NodeCount, sub.LastSyncAt, sub.Upload, sub.Download, sub.Total, sub.Expire, trafficMode, autoUpdate, updateInterval)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return 0, ErrExternalSubscriptionExists
@@ -4257,8 +4311,8 @@ func (r *TrafficRepository) UpdateExternalSubscription(ctx context.Context, sub 
 		updateInterval = 0
 	}
 
-	const stmt = `UPDATE external_subscriptions SET name = ?, url = ?, user_agent = ?, node_count = ?, last_sync_at = ?, upload = ?, download = ?, total = ?, expire = ?, traffic_mode = ?, auto_update = ?, update_interval_minutes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND username = ?`
-	result, err := r.db.ExecContext(ctx, stmt, name, url, userAgent, sub.NodeCount, sub.LastSyncAt, sub.Upload, sub.Download, sub.Total, sub.Expire, trafficMode, autoUpdate, updateInterval, sub.ID, username)
+	const stmt = `UPDATE external_subscriptions SET name = ?, name_prefix = ?, applied_name_prefix = ?, url = ?, user_agent = ?, node_count = ?, last_sync_at = ?, upload = ?, download = ?, total = ?, expire = ?, traffic_mode = ?, auto_update = ?, update_interval_minutes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND username = ?`
+	result, err := r.db.ExecContext(ctx, stmt, name, sub.NamePrefix, sub.AppliedNamePrefix, url, userAgent, sub.NodeCount, sub.LastSyncAt, sub.Upload, sub.Download, sub.Total, sub.Expire, trafficMode, autoUpdate, updateInterval, sub.ID, username)
 	if err != nil {
 		return fmt.Errorf("update external subscription: %w", err)
 	}
@@ -4605,7 +4659,7 @@ func (r *TrafficRepository) ListAllExternalSubscriptions(ctx context.Context) ([
 		return nil, errors.New("traffic repository not initialized")
 	}
 
-	const stmt = `SELECT id, username, name, url, COALESCE(user_agent, 'clash-meta/2.4.0'), node_count, last_sync_at, COALESCE(upload, 0), COALESCE(download, 0), COALESCE(total, 0), expire, COALESCE(traffic_mode, 'both'), COALESCE(auto_update, 0), COALESCE(update_interval_minutes, 0), created_at, updated_at FROM external_subscriptions ORDER BY created_at DESC`
+	const stmt = `SELECT id, username, name, COALESCE(name_prefix, ''), COALESCE(applied_name_prefix, ''), url, COALESCE(user_agent, 'clash-meta/2.4.0'), node_count, last_sync_at, COALESCE(upload, 0), COALESCE(download, 0), COALESCE(total, 0), expire, COALESCE(traffic_mode, 'both'), COALESCE(auto_update, 0), COALESCE(update_interval_minutes, 0), created_at, updated_at FROM external_subscriptions ORDER BY created_at DESC`
 	rows, err := r.db.QueryContext(ctx, stmt)
 	if err != nil {
 		return nil, fmt.Errorf("list all external subscriptions: %w", err)
@@ -4618,7 +4672,7 @@ func (r *TrafficRepository) ListAllExternalSubscriptions(ctx context.Context) ([
 		var lastSyncAt sql.NullTime
 		var expire sql.NullTime
 		var autoUpdate int
-		if err := rows.Scan(&sub.ID, &sub.Username, &sub.Name, &sub.URL, &sub.UserAgent, &sub.NodeCount, &lastSyncAt, &sub.Upload, &sub.Download, &sub.Total, &expire, &sub.TrafficMode, &autoUpdate, &sub.UpdateIntervalMinutes, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+		if err := rows.Scan(&sub.ID, &sub.Username, &sub.Name, &sub.NamePrefix, &sub.AppliedNamePrefix, &sub.URL, &sub.UserAgent, &sub.NodeCount, &lastSyncAt, &sub.Upload, &sub.Download, &sub.Total, &expire, &sub.TrafficMode, &autoUpdate, &sub.UpdateIntervalMinutes, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan external subscription: %w", err)
 		}
 		sub.AutoUpdate = autoUpdate != 0
@@ -4837,8 +4891,11 @@ func (r *TrafficRepository) ListProxyProviderConfigs(ctx context.Context, userna
 	return configs, nil
 }
 
-// ListProxyProviderConfigsBySubscription returns all proxy provider configs for an external subscription
-func (r *TrafficRepository) ListProxyProviderConfigsBySubscription(ctx context.Context, externalSubscriptionID int64) ([]ProxyProviderConfig, error) {
+// ListProxyProviderConfigsBySubscription returns all proxy provider configs for an external subscription.
+//
+// 必须同时按 username 过滤:外部订阅 ID 是全局自增的,只按 ID 查会让任何登录用户
+// 枚举到别人的代理集合配置(含上游请求头)—— GitHub issue #131 报告的越权读取。
+func (r *TrafficRepository) ListProxyProviderConfigsBySubscription(ctx context.Context, externalSubscriptionID int64, username string) ([]ProxyProviderConfig, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("traffic repository not initialized")
 	}
@@ -4849,8 +4906,8 @@ func (r *TrafficRepository) ListProxyProviderConfigsBySubscription(ctx context.C
 			health_check_timeout, health_check_lazy, health_check_expected_status,
 			COALESCE(filter, ''), COALESCE(exclude_filter, ''), COALESCE(exclude_type, ''),
 			COALESCE(geo_ip_filter, ''), COALESCE(override, ''), process_mode, created_at, updated_at
-		FROM proxy_provider_configs WHERE external_subscription_id = ? ORDER BY id ASC
-	`, externalSubscriptionID)
+		FROM proxy_provider_configs WHERE external_subscription_id = ? AND username = ? ORDER BY id ASC
+	`, externalSubscriptionID, username)
 	if err != nil {
 		return nil, fmt.Errorf("list proxy provider configs by subscription: %w", err)
 	}

@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, Eye, Upload, Save, X, Star, Globe2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Eye, Upload, Save, X, Star, Globe2, RefreshCw } from 'lucide-react'
 
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge'
 import { ProxyGroupEditor } from '@/components/template-v3/proxy-group-editor'
 import { TemplatePreview } from '@/components/template-v3/template-preview'
 import { TemplateUploadDialog } from '@/components/template-v3/template-upload-dialog'
+import { TemplateSourceUpdateDialog } from '@/components/template-v3/template-source-update-dialog'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import {
@@ -76,8 +77,11 @@ function TemplatesV3Page() {
   const [editingTemplateName, setEditingTemplateName] = useState<string | null>(null)
 	const isSurgeTemplate = editingTemplateName?.toLowerCase().endsWith('.conf') ?? false
 	const isLoonTemplate = editingTemplateName?.toLowerCase().endsWith('.lcf') ?? false
-	// Surge / Loon 模板都是纯文本段落式配置,只走文本编辑,不进可视化解析。
-	const isTextTemplate = isSurgeTemplate || isLoonTemplate
+	const isQXTemplate = editingTemplateName?.toLowerCase().endsWith('.qx') ?? false
+	const isSingboxTemplate = editingTemplateName?.toLowerCase().endsWith('.json') ?? false
+	// Surge / Loon / QX 模板都是纯文本段落式配置,sing-box 模板是 JSON:只走文本编辑,不进可视化解析。
+	const isTextTemplate = isSurgeTemplate || isLoonTemplate || isQXTemplate || isSingboxTemplate
+	const textTemplateLabel = isSurgeTemplate ? 'Surge' : isLoonTemplate ? 'Loon' : isQXTemplate ? 'Quantumult X' : isSingboxTemplate ? 'sing-box' : ''
   const [templateContent, setTemplateContent] = useState('')
   const [proxyGroups, setProxyGroups] = useState<ProxyGroupFormState[]>([])
   const [editorTab, setEditorTab] = useState<'visual' | 'yaml'>('visual')
@@ -105,7 +109,7 @@ function TemplatesV3Page() {
   const [listPreviewTemplateContent, setListPreviewTemplateContent] = useState('')
 
   // Fetch templates list
-  const { data: templateListData, isLoading } = useQuery<{ templates: string[]; visibility: Record<string, boolean> }>({
+  const { data: templateListData, isLoading } = useQuery<{ templates: string[]; visibility: Record<string, boolean>; sources?: Record<string, string> }>({
     queryKey: ['rule-templates'],
     queryFn: async () => {
       const response = await api.get('/api/admin/rule-templates')
@@ -114,6 +118,9 @@ function TemplatesV3Page() {
   })
 	const templates = templateListData?.templates ?? []
 	const visibility = templateListData?.visibility ?? {}
+	// 从链接导入的模板记着来源链接,「从链接更新」时直接用
+	const templateSources: Record<string, string> = templateListData?.sources ?? {}
+	const [sourceUpdating, setSourceUpdating] = useState<string | null>(null)
 	const { data: defaultTemplates } = useQuery({ queryKey: ['user-default-template'], queryFn: async () => (await api.get('/api/user/default-template')).data })
 	const { data: profile } = useQuery({ queryKey: ['user-profile'], queryFn: async () => (await api.get('/api/user/profile')).data })
 	const defaultMutation = useMutation({
@@ -121,10 +128,14 @@ function TemplatesV3Page() {
 		const lower = name.toLowerCase()
 		const isConf = lower.endsWith('.conf')
 		const isLcf = lower.endsWith('.lcf')
+		const isQx = lower.endsWith('.qx')
+		const isJson = lower.endsWith('.json')
 		return api.put('/api/user/default-template', {
-		  default_template_filename: isConf || isLcf ? (defaultTemplates?.default_template_filename ?? '') : name,
+		  default_template_filename: isConf || isLcf || isQx || isJson ? (defaultTemplates?.default_template_filename ?? '') : name,
 		  default_surge_template_filename: isConf ? name : (defaultTemplates?.default_surge_template_filename ?? ''),
 		  default_loon_template_filename: isLcf ? name : (defaultTemplates?.default_loon_template_filename ?? ''),
+		  default_qx_template_filename: isQx ? name : (defaultTemplates?.default_qx_template_filename ?? ''),
+		  default_singbox_template_filename: isJson ? name : (defaultTemplates?.default_singbox_template_filename ?? ''),
 		})
 	  },
 	  onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['user-default-template'] }); toast.success('默认模板已更新') },
@@ -228,10 +239,11 @@ function TemplatesV3Page() {
 
   // Create template mutation (for paste/blank)
   const createMutation = useMutation({
-    mutationFn: async ({ name, content }: { name: string; content: string }) => {
+    mutationFn: async ({ name, content, sourceUrl }: { name: string; content: string; sourceUrl?: string }) => {
       const formData = new FormData()
       const blob = new Blob([content], { type: 'text/yaml' })
       formData.append('template', blob, name)
+      if (sourceUrl) formData.append('source_url', sourceUrl)
       await api.post('/api/admin/rule-templates/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
@@ -584,7 +596,7 @@ function TemplatesV3Page() {
   const columns: DataTableColumn<string>[] = [
     {
       header: '模板名称',
-		cell: (name) => <span className="flex items-center gap-2 font-medium">{name}{(name === defaultTemplates?.default_template_filename || name === defaultTemplates?.default_surge_template_filename || name === defaultTemplates?.default_loon_template_filename) && <Badge>默认</Badge>}</span>,
+		cell: (name) => <span className="flex items-center gap-2 font-medium">{name}{(name === defaultTemplates?.default_template_filename || name === defaultTemplates?.default_surge_template_filename || name === defaultTemplates?.default_loon_template_filename || name === defaultTemplates?.default_qx_template_filename || name === defaultTemplates?.default_singbox_template_filename) && <Badge>默认</Badge>}</span>,
     },
     {
       header: '操作',
@@ -592,6 +604,9 @@ function TemplatesV3Page() {
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" onClick={() => handleEdit(name)} title="编辑">
             <Pencil className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => setSourceUpdating(name)} title={templateSources[name] ? `从链接更新：${templateSources[name]}` : '从链接更新'}>
+            <RefreshCw className={cn('h-4 w-4', templateSources[name] && 'text-primary')} />
           </Button>
 		  <Button variant="ghost" size="icon" onClick={() => handleListPreview(name)} title="预览">
             <Eye className="h-4 w-4" />
@@ -614,7 +629,7 @@ function TemplatesV3Page() {
           <div>
             <CardTitle>模板管理</CardTitle>
             <CardDescription>
-              管理 Clash/Mihomo、Surge 与 Loon 模板，并设置个人默认模板
+              管理 Clash/Mihomo、Surge、Loon、Quantumult X 与 sing-box 模板，并设置个人默认模板
             </CardDescription>
           </div>
           <Button onClick={() => setIsUploadDialogOpen(true)} className="w-full sm:w-auto">
@@ -627,6 +642,8 @@ function TemplatesV3Page() {
             <div><span className="text-muted-foreground">个人默认 Clash：</span>{defaultTemplates?.default_template_filename || '未设置'}</div>
             <div><span className="text-muted-foreground">个人默认 Surge：</span>{defaultTemplates?.default_surge_template_filename || '未设置'}</div>
             <div><span className="text-muted-foreground">个人默认 Loon：</span>{defaultTemplates?.default_loon_template_filename || '未设置'}</div>
+            <div><span className="text-muted-foreground">个人默认 Quantumult X：</span>{defaultTemplates?.default_qx_template_filename || '未设置'}</div>
+            <div><span className="text-muted-foreground">个人默认 sing-box：</span>{defaultTemplates?.default_singbox_template_filename || '未设置'}</div>
           </div>
           <DataTable
             columns={columns}
@@ -639,6 +656,9 @@ function TemplatesV3Page() {
                 <div className="flex flex-wrap items-center gap-2 w-full justify-between px-2">
                   <Button variant="ghost" size="sm" onClick={() => handleEdit(name)} className="flex-1">
                     <Pencil className="h-4 w-4 mr-1.5" /> 编辑
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setSourceUpdating(name)} className="flex-1">
+                    <RefreshCw className={cn('h-4 w-4 mr-1.5', templateSources[name] && 'text-primary')} /> 从链接更新
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => handleListPreview(name)} className="flex-1">
                     <Eye className="h-4 w-4 mr-1.5" /> 预览
@@ -726,7 +746,7 @@ function TemplatesV3Page() {
               <Tabs value={editorTab} onValueChange={handleTabChange} className="flex flex-col h-full overflow-hidden">
 				<TabsList className={cn("flex-shrink-0 w-full grid", isTextTemplate ? "grid-cols-1" : "grid-cols-2")}>
 				  {!isTextTemplate && <TabsTrigger value="visual">可视化编辑</TabsTrigger>}
-				  <TabsTrigger value="yaml">{isSurgeTemplate ? 'Surge 配置' : isLoonTemplate ? 'Loon 配置' : 'YAML 代码'}</TabsTrigger>
+				  <TabsTrigger value="yaml">{isTextTemplate ? `${textTemplateLabel} 配置` : 'YAML 代码'}</TabsTrigger>
                 </TabsList>
 
 				{!isTextTemplate && <TabsContent value="visual" className="flex-1 min-h-0 overflow-hidden mt-4 flex flex-col data-[state=inactive]:hidden">
@@ -775,7 +795,7 @@ function TemplatesV3Page() {
                     value={templateContent}
                     onChange={(e) => handleYamlChange(e.target.value)}
                     className="flex-1 font-mono text-xs sm:text-sm resize-none p-4"
-					placeholder={isSurgeTemplate ? 'Surge .conf 配置内容...' : isLoonTemplate ? 'Loon .lcf 配置内容...' : 'YAML 内容...'}
+					placeholder={isSurgeTemplate ? 'Surge .conf 配置内容...' : isLoonTemplate ? 'Loon .lcf 配置内容...' : isQXTemplate ? 'Quantumult X .qx 配置内容...' : isSingboxTemplate ? 'sing-box .json 配置内容...' : 'YAML 内容...'}
                   />
                 </TabsContent>
               </Tabs>
@@ -805,8 +825,15 @@ function TemplatesV3Page() {
         open={isUploadDialogOpen}
         onOpenChange={setIsUploadDialogOpen}
         onUpload={(file) => uploadMutation.mutate(file)}
-        onCreate={(name, content) => createMutation.mutate({ name, content })}
+        onCreate={(name, content, sourceUrl) => createMutation.mutate({ name, content, sourceUrl })}
         isLoading={uploadMutation.isPending || createMutation.isPending}
+      />
+
+      {/* 从链接更新对话框 */}
+      <TemplateSourceUpdateDialog
+        name={sourceUpdating}
+        sourceUrl={sourceUpdating ? templateSources[sourceUpdating] : ''}
+        onClose={() => setSourceUpdating(null)}
       />
 
       {/* List Preview Dialog */}

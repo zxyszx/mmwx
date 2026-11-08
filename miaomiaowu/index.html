@@ -27,33 +27,34 @@
     <meta property="twitter:description" content="妙妙屋 By miaomiaowu.net" />
     <meta property="twitter:image" content="./safari-pinned-tab.svg" />
 
-    <meta name="theme-color" content="#f5f6f8" />
-    <script>
-      ;(function () {
-        var key = 'vite-ui-theme'
-        var stored = window.localStorage.getItem(key)
-        var cookie = document.cookie.match(
-          new RegExp('(?:^|; )' + key + '=([^;]*)')
-        )
-        var preference = stored || (cookie ? decodeURIComponent(cookie[1]) : '')
-        var dark =
-          preference === 'dark' ||
-          ((preference === 'system' || !preference) &&
-            window.matchMedia('(prefers-color-scheme: dark)').matches)
-        document.documentElement.classList.add(dark ? 'dark' : 'light')
-        document
-          .querySelector("meta[name='theme-color']")
-          ?.setAttribute('content', dark ? '#0f1115' : '#f5f6f8')
-      })()
-    </script>
+    <meta name="theme-color" content="#fff" />
+
+    <!--
+      PWA(从妙妙屋X 移植)。manifest 由 Go 动态提供(见 internal/web/pwa.go);
+      apple-* 三项给 iOS「添加到主屏幕」用 —— iOS 不读 manifest 里的图标和名称。
+      mmw-pwa 是系统设置里的开关,服务端把占位符换成 true/false,前端据此决定注册还是注销
+      service worker(src/lib/pwa.ts)。Vite 开发服务器不做替换,占位符原样留着(开发环境本来就不注册)。
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/images/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="妙妙屋" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="mmw-pwa" content="__MMW_PWA_ENABLED__" />
+    <script
+      async
+      defer
+      src="https://in.miaomiaowu.net/script.js"
+      data-website-id="6972d2b9-23de-4053-8e5b-d75970cae2bf"
+    ></script>
+
     <!--
       面板壁纸/玻璃色调注入点:服务端把下面这个占位符换成一段 CSS 变量声明
       (--g-dim / --g-wallpaper / 自定义色调),没配置就留空。放 <head>:它只发变量、不发规则,
       变量要在应用样式表求值之前就位。见 internal/web/handler.go。
     -->
-    <style id="mmw-panel-wallpaper">
-      __MMW_PANEL_WALLPAPER__
-    </style>
+    <style id="mmw-panel-wallpaper">__MMW_PANEL_WALLPAPER__</style>
   </head>
 
   <body>

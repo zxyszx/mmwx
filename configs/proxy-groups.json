@@ -219,7 +219,7 @@
         "type": "http",
         "format": "mrs",
         "url": "https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geoip/telegram.mrs",
-        "path": "./ruleset/telegram.mrs",
+        "path": "./ruleset/telegram-ip.mrs",
         "interval": 86400
       }
     ]

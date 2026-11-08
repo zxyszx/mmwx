@@ -26,7 +26,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -122,37 +121,6 @@ export function UserMenu() {
   const fallbackText = displayName.slice(0, 2)
   const emailText = profile?.email?.trim()
   const levelText = profile?.role ? profile.role.toUpperCase() : 'LV.0'
-  const themeStyle = getCookie('mmw-theme-style') || 'miaomiaowu'
-  const themeOptions = [
-    {
-      value: 'miaomiaowu',
-      label: '妙妙屋',
-      tone: '像素',
-      swatch:
-        'bg-[linear-gradient(135deg,#f18c6e_0%,#ffd2c2_48%,#fff7f2_100%)]',
-    },
-    {
-      value: 'flat',
-      label: '扁平',
-      tone: '清爽',
-      swatch:
-        'bg-[linear-gradient(135deg,#2563eb_0%,#38bdf8_55%,#f8fafc_100%)]',
-    },
-    {
-      value: 'anime',
-      label: '二次元',
-      tone: '动效',
-      swatch:
-        'bg-[linear-gradient(135deg,#ec4899_0%,#a78bfa_52%,#fef3c7_100%)]',
-    },
-    {
-      value: 'glass',
-      label: '液态玻璃',
-      tone: '通透',
-      swatch:
-        'bg-[linear-gradient(135deg,#06b6d4_0%,#dbeafe_50%,#f8fafc_100%)]',
-    },
-  ]
 
   return (
     <>
@@ -162,18 +130,18 @@ export function UserMenu() {
             variant='outline'
             size='sm'
             aria-label={`用户菜单: ${displayName}`}
-            className='app-header-control user-menu-trigger h-9 min-w-0 justify-center gap-2 overflow-hidden border-transparent bg-transparent px-1 py-0.5 shadow-none sm:min-w-[96px] sm:px-1.5'
+            className='user-menu-trigger pixel-button h-9 min-w-0 justify-center gap-2 overflow-hidden px-2 py-2 sm:min-w-[120px] sm:gap-2 sm:px-3'
           >
             <span className='sr-only'>{`用户菜单: ${displayName}`}</span>
-            <Avatar className='um-avatar size-7 ring-1 ring-[var(--border-subtle)]'>
+            <Avatar className='um-avatar size-7 border-[1.5px] border-[color:rgba(241,140,110,0.45)] shadow-[2px_2px_0_rgba(0,0,0,0.2)]'>
               <AvatarImage src={avatarSrc} alt={displayName} />
               <AvatarFallback>{fallbackText || '用户'}</AvatarFallback>
             </Avatar>
             <div className='hidden sm:flex sm:flex-col sm:items-center sm:leading-tight'>
-              <span className='um-name max-w-[66px] truncate text-[13px] font-medium'>
+              <span className='um-name max-w-[70px] truncate text-sm font-semibold'>
                 {displayName}
               </span>
-              <span className='um-level text-muted-foreground text-[10px] tracking-[0.14em] uppercase'>
+              <span className='um-level text-muted-foreground text-xs tracking-[0.2em] uppercase'>
                 {levelText}
               </span>
             </div>
@@ -227,53 +195,45 @@ export function UserMenu() {
             />
           </DropdownMenuItem>
 
-          <div className='space-y-2 px-1'>
-            <DropdownMenuLabel className='flex items-center gap-2 px-1 py-0 text-xs'>
-              <Palette className='size-4' />
-              外观风格
-            </DropdownMenuLabel>
-            <div className='grid grid-cols-2 gap-2'>
-              {themeOptions.map((opt) => {
-                const selected = themeStyle === opt.value
-                return (
-                  <button
-                    key={opt.value}
-                    type='button'
-                    aria-pressed={selected}
-                    title={`切换到${opt.label}风格`}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      if (!selected) {
-                        setCookie(
-                          'mmw-theme-style',
-                          opt.value,
-                          60 * 60 * 24 * 365
-                        )
-                        window.location.reload()
-                      }
-                    }}
-                    className={`hover:bg-muted/80 focus-visible:ring-ring flex min-h-12 items-center gap-1.5 rounded-md border px-1.5 py-2 text-left transition focus-visible:ring-2 focus-visible:outline-none ${
-                      selected
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-background/60'
-                    }`}
-                  >
-                    <span
-                      className={`size-5 shrink-0 rounded-sm border border-white/70 shadow-sm ${opt.swatch}`}
-                    />
-                    <span className='leading-tight'>
-                      <span className='block text-xs font-semibold whitespace-nowrap'>
-                        {opt.label}
-                      </span>
-                      <span className='text-muted-foreground block text-[11px]'>
-                        {opt.tone}
-                      </span>
-                    </span>
-                  </button>
-                )
-              })}
+          {/* 界面风格切换 */}
+          <DropdownMenuItem
+            className='cursor-pointer px-2'
+            onSelect={(e) => e.preventDefault()}
+          >
+            <Palette className='size-4 shrink-0' />
+            <div className='flex flex-1 gap-1'>
+              {[
+                { value: 'miaomiaowu', label: '妙妙屋' },
+                { value: 'flat', label: '扁平' },
+                { value: 'anime', label: '二次元' },
+                { value: 'glass', label: '液态玻璃' },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type='button'
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    const current = getCookie('mmw-theme-style') || 'miaomiaowu'
+                    if (current !== opt.value) {
+                      setCookie(
+                        'mmw-theme-style',
+                        opt.value,
+                        60 * 60 * 24 * 365
+                      )
+                      window.location.reload()
+                    }
+                  }}
+                  className={`flex-1 border px-2 py-0.5 text-xs transition-colors ${
+                    (getCookie('mmw-theme-style') || 'miaomiaowu') === opt.value
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background hover:bg-muted border-border'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
-          </div>
+          </DropdownMenuItem>
 
           <DropdownMenuItem asChild className='cursor-pointer justify-center'>
             <a

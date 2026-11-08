@@ -22,7 +22,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -40,6 +40,14 @@ import { translateOutbound } from '@/lib/sublink/translations'
 import { validateClashConfig, formatValidationIssues } from '@/lib/clash-validator'
 import { ExternalSyncNodeDialog } from '@/components/external-sync-node-dialog'
 import { useExternalSyncSelection } from '@/hooks/use-external-sync-selection'
+import { ALL_TEMPLATE_PRESETS } from '@/lib/template-presets'
+import {
+  convertV2RuleSourceToV3,
+  resolveV2TemplateSelection,
+  uploadV3Template,
+  v2TemplateToV3Filename,
+  type V2UserTemplate,
+} from '@/lib/template-v2-to-v3'
 
 export const Route = createFileRoute('/subscribe-files/')({
   beforeLoad: () => {
@@ -99,6 +107,7 @@ type ExternalSubscription = {
   traffic_mode: 'download' | 'upload' | 'both' | 'none'
   auto_update: boolean
   update_interval_minutes: number
+  name_prefix?: string
   created_at: string
   updated_at: string
 }
@@ -310,6 +319,8 @@ function SubscribeFilesPage() {
     selected_tags: [] as string[],
     template_filename: '',
   })
+  // 聚合订阅选了 V2 模板时,先转换为 V3 模板文件再绑定(issue #125)
+  const [isConvertingV2Template, setIsConvertingV2Template] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editingFile, setEditingFile] = useState<SubscribeFile | null>(null)
   const [editMetadataDialogOpen, setEditMetadataDialogOpen] = useState(false)
@@ -397,6 +408,7 @@ function SubscribeFilesPage() {
     traffic_mode: 'both' as 'download' | 'upload' | 'both' | 'none',
     auto_update: false,
     update_interval_minutes: 60,
+    name_prefix: '',
   })
 
   // 代理集合对话框状态
@@ -493,6 +505,17 @@ function SubscribeFilesPage() {
 
   const v3Templates = templatesData?.templates ?? []
 
+  // 获取 V2 模板列表(聚合订阅可选 V2 模板,转换为 V3 后绑定)
+  const { data: v2TemplatesData } = useQuery({
+    queryKey: ['templates'],
+    queryFn: async () => {
+      const response = await api.get('/api/admin/templates')
+      return response.data as { templates: V2UserTemplate[] }
+    },
+    enabled: Boolean(auth.accessToken) && aggregateDialogOpen,
+  })
+  const v2UserTemplates = v2TemplatesData?.templates ?? []
+
   // 获取外部订阅列表
   const { data: externalSubsData, isLoading: isExternalSubsLoading } = useQuery({
     queryKey: ['external-subscriptions'],
@@ -563,7 +586,8 @@ function SubscribeFilesPage() {
       const response = await api.get('/api/admin/nodes')
       return response.data as { nodes: Array<{ id: number; node_name: string; tag: string; tags: string[] }> }
     },
-    enabled: Boolean(auth.accessToken && (isExternalSubsExpanded || hasTemplateBindings)),
+    // 聚合订阅对话框需要节点标签,打开时也要拉取节点列表
+    enabled: Boolean(auth.accessToken && (isExternalSubsExpanded || hasTemplateBindings || aggregateDialogOpen)),
   })
 
   const { data: customRulesData } = useQuery({
@@ -809,6 +833,7 @@ function SubscribeFilesPage() {
       traffic_mode: string
       auto_update?: boolean
       update_interval_minutes?: number
+      name_prefix?: string
     }) => {
       await api.put(`/api/user/external-subscriptions?id=${data.id}`, {
         name: data.name,
@@ -817,10 +842,12 @@ function SubscribeFilesPage() {
         traffic_mode: data.traffic_mode,
         auto_update: data.auto_update,
         update_interval_minutes: data.update_interval_minutes,
+        name_prefix: data.name_prefix,
       })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['external-subscriptions'] })
+      queryClient.invalidateQueries({ queryKey: ['nodes'] })
       queryClient.invalidateQueries({ queryKey: ['traffic-summary'] })
       toast.success('外部订阅已更新')
     },
@@ -1633,7 +1660,7 @@ function SubscribeFilesPage() {
   }
 
   
-  const handleCreateAggregate = () => {
+  const handleCreateAggregate = async () => {
     if (!aggregateForm.name.trim()) {
       toast.error('请输入订阅名称')
       return
@@ -1642,12 +1669,37 @@ function SubscribeFilesPage() {
       toast.error('请至少选择一个源订阅/标签')
       return
     }
+
+    // 选中的是 V2 模板:转换为 V3 模板文件后绑定;同名 V3 文件已存在则直接复用
+    let templateFilename = aggregateForm.template_filename
+    const v2Selection = resolveV2TemplateSelection(templateFilename, v2UserTemplates)
+    if (v2Selection) {
+      const v3Filename = v2TemplateToV3Filename(v2Selection.baseName)
+      if (v3Templates.some((t) => t.filename === v3Filename)) {
+        templateFilename = v3Filename
+      } else {
+        setIsConvertingV2Template(true)
+        try {
+          const content = await convertV2RuleSourceToV3(v2Selection.ruleSourceUrl)
+          templateFilename = await uploadV3Template(v3Filename, content)
+          queryClient.invalidateQueries({ queryKey: ['template-v3-list'] })
+          queryClient.invalidateQueries({ queryKey: ['rule-templates'] })
+          toast.success(`已将 V2 模板转换为 V3 模板：${templateFilename}`)
+        } catch (error: any) {
+          toast.error(error.response?.data?.error || 'V2 模板转换失败')
+          return
+        } finally {
+          setIsConvertingV2Template(false)
+        }
+      }
+    }
+
     createAggregateMutation.mutate({
       name: aggregateForm.name.trim(),
       description: aggregateForm.description.trim() || undefined,
       filename: aggregateForm.filename.trim() || undefined,
       selected_tags: aggregateForm.selected_tags,
-      template_filename: aggregateForm.template_filename || undefined,
+      template_filename: templateFilename || undefined,
     })
   }
 
@@ -1786,6 +1838,7 @@ const handleUpload = () => {
     // 添加特殊节点
     proxyGroupNames.add('DIRECT')
     proxyGroupNames.add('REJECT')
+    proxyGroupNames.add('REJECT-DROP')
     proxyGroupNames.add('PROXY')
     proxyGroupNames.add('no-resolve')
 
@@ -1830,6 +1883,7 @@ const handleUpload = () => {
       // 添加特殊节点
       proxyGroupNames.add('DIRECT')
       proxyGroupNames.add('REJECT')
+      proxyGroupNames.add('REJECT-DROP')
       proxyGroupNames.add('PROXY')
       proxyGroupNames.add('no-resolve')
 
@@ -1973,7 +2027,7 @@ const handleUpload = () => {
       proxyGroups.forEach(group => {
         group.proxies.forEach(proxy => {
           // 只添加实际节点（不是DIRECT、REJECT等特殊节点，也不是其他代理组）
-          if (!['DIRECT', 'REJECT', 'PROXY', 'no-resolve'].includes(proxy) &&
+          if (!['DIRECT', 'REJECT', 'REJECT-DROP', 'PROXY', 'no-resolve'].includes(proxy) &&
               !proxyGroups.some(g => g.name === proxy)) {
             usedNodeNames.add(proxy)
           }
@@ -2839,7 +2893,7 @@ const handleUpload = () => {
                         )}
                       </div>
                       <div className='space-y-2'>
-                        <Label>绑定 V3 模板（可选）</Label>
+                        <Label>绑定模板（可选）</Label>
                         <Select
                           value={aggregateForm.template_filename || '__none__'}
                           onValueChange={(v) => setAggregateForm({
@@ -2852,15 +2906,39 @@ const handleUpload = () => {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value='__none__'>不绑定模板（精简配置，实时节点）</SelectItem>
-                            {v3Templates.map((template: any) => (
-                              <SelectItem key={template.filename} value={template.filename}>
-                                {template.name}
-                              </SelectItem>
-                            ))}
+                            {v3Templates.length > 0 && (
+                              <SelectGroup>
+                                <SelectLabel>V3 模板</SelectLabel>
+                                {v3Templates.map((template: any) => (
+                                  <SelectItem key={template.filename} value={template.filename}>
+                                    {template.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            )}
+                            {v2UserTemplates.length > 0 && (
+                              <SelectGroup>
+                                <SelectLabel>我的 V2 模板（转换为 V3 后绑定）</SelectLabel>
+                                {v2UserTemplates.map((template) => (
+                                  <SelectItem key={`v2-user-${template.id}`} value={`user:${template.id}`}>
+                                    {template.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            )}
+                            <SelectGroup>
+                              <SelectLabel>V2 预设模板（转换为 V3 后绑定）</SelectLabel>
+                              {ALL_TEMPLATE_PRESETS.map((preset) => (
+                                <SelectItem key={`v2-preset-${preset.name}`} value={`preset:${preset.name}`}>
+                                  {preset.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
                           </SelectContent>
                         </Select>
                         <p className='text-xs text-muted-foreground'>
                           绑定模板后，获取订阅时会按模板 + 所选标签动态生成；不绑定则输出精简 Clash 配置，节点同样实时更新。
+                          选择 V2 模板时会先转换为 V3 模板文件再绑定，之后可在 V3 模板页继续编辑。
                         </p>
                       </div>
                     </div>
@@ -2870,9 +2948,13 @@ const handleUpload = () => {
                       </Button>
                       <Button
                         onClick={handleCreateAggregate}
-                        disabled={createAggregateMutation.isPending}
+                        disabled={createAggregateMutation.isPending || isConvertingV2Template}
                       >
-                        {createAggregateMutation.isPending ? '创建中...' : '创建聚合订阅'}
+                        {isConvertingV2Template
+                          ? '转换模板中...'
+                          : createAggregateMutation.isPending
+                            ? '创建中...'
+                            : '创建聚合订阅'}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
@@ -4228,6 +4310,9 @@ const handleUpload = () => {
                       cell: (sub) => (
                         <div className='flex flex-col gap-1'>
                           <span>{sub.name}</span>
+                          {sub.name_prefix ? (
+                            <span className='text-[10px] font-normal text-muted-foreground'>前缀 {sub.name_prefix}</span>
+                          ) : null}
                           {sub.auto_update && (
                             <Badge variant='secondary' className='w-fit text-[10px]'>
                               定时 {sub.update_interval_minutes >= 60
@@ -4457,6 +4542,7 @@ const handleUpload = () => {
                                 traffic_mode: sub.traffic_mode || 'both',
                                 auto_update: Boolean(sub.auto_update),
                                 update_interval_minutes: sub.update_interval_minutes > 0 ? sub.update_interval_minutes : 60,
+                                name_prefix: sub.name_prefix || '',
                               })
                               setEditExternalSubDialogOpen(true)
                             }}
@@ -4530,6 +4616,11 @@ const handleUpload = () => {
                             </TooltipContent>
                           </Tooltip>
                           <div className='font-medium text-sm truncate'>{sub.name}</div>
+                          {sub.name_prefix ? (
+                            <span className='max-w-[8rem] truncate text-[10px] text-muted-foreground' title={sub.name_prefix}>
+                              {sub.name_prefix}
+                            </span>
+                          ) : null}
                           {sub.auto_update && (
                             <div className='text-[10px] text-muted-foreground'>
                               定时更新 · {sub.update_interval_minutes >= 60
@@ -4553,6 +4644,7 @@ const handleUpload = () => {
                                 traffic_mode: sub.traffic_mode || 'both',
                                 auto_update: Boolean(sub.auto_update),
                                 update_interval_minutes: sub.update_interval_minutes > 0 ? sub.update_interval_minutes : 60,
+                                name_prefix: sub.name_prefix || '',
                               })
                               setEditExternalSubDialogOpen(true)
                             }}
@@ -6576,7 +6668,7 @@ const handleUpload = () => {
           <DialogHeader>
             <DialogTitle>编辑外部订阅</DialogTitle>
             <DialogDescription>
-              修改外部订阅的地址和流量统计方式
+              修改外部订阅的地址、节点名前缀和流量统计方式
             </DialogDescription>
           </DialogHeader>
           <div className='space-y-4'>
@@ -6587,6 +6679,34 @@ const handleUpload = () => {
                 onChange={(e) => setEditExternalSubForm(prev => ({ ...prev, url: e.target.value }))}
                 placeholder='https://example.com/subscribe'
               />
+            </div>
+            <div className='space-y-2'>
+              <div className='flex items-center justify-between gap-2'>
+                <Label htmlFor='edit-sub-name-prefix'>节点名前缀</Label>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  className='h-7 px-2 text-xs'
+                  onClick={() => {
+                    const name = (editingExternalSub?.name || '').trim()
+                    if (!name) return
+                    setEditExternalSubForm(prev => ({ ...prev, name_prefix: `〖${name}〗` }))
+                  }}
+                >
+                  使用订阅名
+                </Button>
+              </div>
+              <Input
+                id='edit-sub-name-prefix'
+                value={editExternalSubForm.name_prefix}
+                onChange={(e) => setEditExternalSubForm(prev => ({ ...prev, name_prefix: e.target.value }))}
+                placeholder='例如 〖机场A〗，留空则不加前缀'
+                className='font-mono text-sm'
+              />
+              <p className='text-xs text-muted-foreground'>
+                给节点名加前缀，例如〖机场A〗香港。保存后立即生效。
+              </p>
             </div>
             <div className='space-y-2'>
               <Label>流量统计方式</Label>
@@ -6664,6 +6784,7 @@ const handleUpload = () => {
                     traffic_mode: editExternalSubForm.traffic_mode,
                     auto_update: editExternalSubForm.auto_update,
                     update_interval_minutes: editExternalSubForm.update_interval_minutes,
+                    name_prefix: editExternalSubForm.name_prefix,
                   })
                   setEditExternalSubDialogOpen(false)
                   setEditingExternalSub(null)

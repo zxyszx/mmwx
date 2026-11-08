@@ -15,7 +15,7 @@ MMWX_SOURCE_ONLY
 exit 2
 
 # 配置
-VERSION="v0.8.6"
+VERSION="v0.10.1"
 GITHUB_REPO="iluobei/miaomiaowu"
 BINARY_NAME=""  # 将根据架构自动设置
 INSTALL_DIR="/usr/local/bin"

@@ -234,6 +234,10 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	// Get username from context
 	username := auth.UsernameFromContext(r.Context())
+	// 订阅获取开关(见 subscription_fetch.go):token 长链接与短码都在这里汇合。
+	if rejectSubscriptionFetchDisabled(w, r, h.repo, username) {
+		return
+	}
 
 	// 文件查找
 	stepStart = time.Now()
@@ -368,7 +372,16 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	fromTemplate := false
 	fromSurgeTemplate := false
 	fromLoonTemplate := false
+	fromQXTemplate := false // Quantumult X 模板直出:data 已是 QX INI 文本
+	// sing-box 模板直出:data 已是完整的 sing-box 配置(JSON)。JSON 也是合法的 YAML,
+	// 下面那些「解析 YAML 再改写」的步骤遇到它不会报错、而是真的去改 —— 所以凡是会改写 data 的步骤都要看这个标记。
+	fromSingboxTemplate := false
 	effectiveTemplate := subscribeFile.TemplateFilename
+	// sing-box 模板(.json)只对 sing-box 客户端有意义。别的客户端遇到绑了它的订阅,当作没绑,
+	// 往下走个人默认模板 / 静态文件 —— 否则 Clash 客户端会收到一份 sing-box 配置。
+	if hasSubscribeFile && isSingboxTemplateFile(effectiveTemplate) && !isSingboxTemplateClientType(resolveClientType(r)) {
+		effectiveTemplate = ""
+	}
 	if hasSubscribeFile && effectiveTemplate == "" && username != "" {
 		if settings, err := h.repo.GetUserSettings(r.Context(), username); err == nil {
 			// Loon 判断在 Surge 之前(客户端类型独立,这里只是保持与文件判定一致的优先级)。
@@ -377,6 +390,10 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				effectiveTemplate = settings.DefaultLoonTemplateFilename
 			case isSurgeClientType(ct):
 				effectiveTemplate = settings.DefaultSurgeTemplateFilename
+			case isQXTemplateClientType(ct):
+				effectiveTemplate = settings.DefaultQXTemplateFilename
+			case isSingboxTemplateClientType(ct):
+				effectiveTemplate = settings.DefaultSingboxTemplateFilename
 			default:
 				effectiveTemplate = settings.DefaultTemplateFilename
 			}
@@ -395,6 +412,8 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			fromTemplate = true
 			fromSurgeTemplate = isSurgeTemplateFile(effectiveTemplate)
 			fromLoonTemplate = isLoonTemplateFile(effectiveTemplate)
+			fromQXTemplate = isQXTemplateFile(effectiveTemplate)
+			fromSingboxTemplate = isSingboxTemplateFile(effectiveTemplate)
 			logger.Info("[⏱️ 耗时监测] 模板生成完成", "step", "template_generate", "duration_ms", time.Since(stepStart).Milliseconds(), "bytes", len(data))
 		}
 	}
@@ -672,7 +691,8 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	// 在转换之前根据节点排序配置调整原始 YAML
 	// 这样转换后的任何格式都会保持正确的节点顺序
-	if len(nodeOrder) > 0 && username != "" && h.repo != nil {
+	// sing-box 模板直出时跳过:节点顺序在生成时已按用户配置排好,这里再跑一遍会把那份 JSON 整份改写成 YAML。
+	if len(nodeOrder) > 0 && username != "" && h.repo != nil && !fromSingboxTemplate {
 		var yamlNode yaml.Node
 		if err := yaml.Unmarshal(data, &yamlNode); err == nil {
 			shouldRewrite := false
@@ -707,8 +727,10 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	logger.Info("[⏱️ 耗时监测] 节点排序完成", "step", "node_order", "duration_ms", time.Since(stepStart).Milliseconds())
 
 	// 执行覆写脚本（post_fetch 钩子），转换为客户端配置前执行，对所有客户端类型生效
+	// 覆写脚本改的是 Clash YAML。sing-box 模板直出的是另一种结构的 JSON,脚本按 Clash 的键去改,
+	// 轻则无效、重则把配置写坏,所以不跑。
 	stepStart = time.Now()
-	if hasSubscribeFile && subscribeFile.AutoSyncCustomRules {
+	if hasSubscribeFile && subscribeFile.AutoSyncCustomRules && !fromSingboxTemplate {
 		if username := auth.UsernameFromContext(r.Context()); username != "" {
 			if sysCfg, err := h.repo.GetSystemConfig(r.Context()); err == nil && sysCfg.EnableOverrideScripts {
 				selectedScriptIDs := makeIDSet(subscribeFile.SelectedOverrideScriptIDs)
@@ -735,14 +757,14 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				logger.Info("[OverrideScript] 覆写脚本功能未启用", "enable_override_scripts", sysCfg.EnableOverrideScripts, "err", err)
 			}
 		}
-	} else if hasSubscribeFile {
+	} else if hasSubscribeFile && !fromSingboxTemplate {
 		logger.Info("[OverrideScript] 订阅文件未开启自动应用", "auto_sync_custom_rules", subscribeFile.AutoSyncCustomRules)
 	}
 	logger.Info("[⏱️ 耗时监测] 覆写脚本执行完成", "step", "override_script", "duration_ms", time.Since(stepStart).Milliseconds())
 
-	// 动态应用自定义规则
+	// 动态应用自定义规则(自定义规则是 Clash 配置上的操作,sing-box 模板直出的 JSON 不套)
 	stepStart = time.Now()
-	if hasSubscribeFile && subscribeFile.AutoSyncCustomRules {
+	if hasSubscribeFile && subscribeFile.AutoSyncCustomRules && !fromSingboxTemplate {
 		selectedRuleIDs := makeIDSet(subscribeFile.SelectedCustomRuleIDs)
 		if modified, _, applyErr := applyCustomRulesToYamlFiltered(r.Context(), h.repo, data, selectedRuleIDs); applyErr != nil {
 			logger.Info("[Subscription] 应用自定义规则失败", "error", applyErr)
@@ -763,7 +785,15 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		ext = ".yaml"
 	}
 
-	data = deduplicateProxies(data, username)
+	// 静态订阅文件:残缺节点(缺 type/server/port)剔掉、一个都不剩时补占位节点,放在格式转换之前,
+	// 各客户端格式都受益(模板 / 标签动态生成那两条路已在节点表那一层处理)。
+	if !fromTemplate {
+		data = dropIncompleteProxiesFromStaticSubscription(data)
+	}
+
+	if !fromSingboxTemplate {
+		data = deduplicateProxies(data, username)
+	}
 
 	// v2ray 订阅信息节点(SubInfoV2RayOnly):v2ray/base64 输出没有 proxies 结构可供事后注入,
 	// 得在转换成 base64 之前就把信息节点塞进 clash proxies,让 v2ray producer 当普通节点吐出来。
@@ -792,6 +822,11 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// 正规 CA 证书节点不钉证书(系统设置开了才动)。Surge / Loon 模板直出已在生成时按节点处理过,不是 Clash YAML。
+	if !fromSurgeTemplate && !fromLoonTemplate {
+		data = unpinPublicCACertsInClashYAML(data)
+	}
+
 	// clash/classmeta/clash-to-shadowrocket 直接输出 Clash YAML, 不需要转换
 	if fromSurgeTemplate {
 		contentType = "text/plain; charset=utf-8"
@@ -800,6 +835,14 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		// Loon 模板已是成品纯文本(段落式配置),直接下发,不进任何转换分支。
 		contentType = "text/plain; charset=utf-8"
 		ext = ".lcf"
+	} else if fromQXTemplate {
+		// Quantumult X 模板直出:同上,data 已是 QX INI 文本。
+		contentType = "text/plain; charset=utf-8"
+		ext = ".conf"
+	} else if fromSingboxTemplate {
+		// sing-box 模板直出:data 已是完整配置,不再转换。
+		contentType = "application/json; charset=utf-8"
+		ext = ".json"
 	} else if clientType == "" || clientType == "clash" || clientType == "clashmeta" {
 		data = filterSnellV6FromClashYAML(data)
 	} else if clientType != "clash-to-shadowrocket" {
@@ -898,6 +941,13 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 							}
 						}
 						break
+					}
+				}
+
+				// 静态订阅文件:探测判定不可用且开启了自动移除的节点,下发时剔掉(模板路径已在节点列表过滤)
+				if !fromTemplate {
+					if n := removeProbeDownProxiesFromYAML(rootMap); n > 0 {
+						logger.Info("[Subscription] 已剔除探测不可用节点", "count", n)
 					}
 				}
 
@@ -1508,6 +1558,9 @@ func (h *SubscriptionHandler) convertSubscription(ctx context.Context, yamlData 
 			continue
 		}
 		proxies = append(proxies, substore.Proxy(proxyMap))
+	}
+	if isLoonClientType(clientType) {
+		normalizeLoonHysteria2Passwords(proxies)
 	}
 
 	if len(proxies) == 0 {
@@ -2414,6 +2467,8 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 	if err != nil {
 		return nil, fmt.Errorf("获取节点列表失败: %w", err)
 	}
+	// 探测判定不可用且开启了自动移除的节点,不进订阅(见 node_probe_removal.go)
+	nodes = filterProbeRemovedNodes(nodes)
 
 	// 按用户配置的节点顺序排序
 	if settings, err := h.repo.GetUserSettings(ctx, username); err == nil && len(settings.NodeOrder) > 0 {
@@ -2448,6 +2503,11 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 		normalizeProxyFields(proxyConfig)
 		// 确保节点名称正确（使用数据库中的名称）
 		proxyConfig["name"] = node.NodeName
+		// 残缺节点(缺 type/server/port)不发:一个就能让 mihomo 整份订阅加载失败
+		if missing := clashProxyMissingFields(proxyConfig); len(missing) > 0 {
+			logger.Warn("[模板生成] 节点 clash 配置残缺,本次不下发", "node_id", node.ID, "node", node.NodeName, "missing", missing)
+			return nil, false
+		}
 		// 链式代理：根据 chain_proxy_node_id 注入 dialer-proxy
 		if node.ChainProxyNodeID != nil {
 			if targetName, ok := nodeIDToName[*node.ChainProxyNodeID]; ok {
@@ -2531,6 +2591,16 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 
 	logger.Info("[模板生成] 从节点表获取代理节点", "total", len(nodes), "enabled", len(proxies), "tag_filter", hasTagFilter, "relay_groups", len(relayGroups))
 
+	// 正规 CA 证书节点不钉证书(系统设置开了才动):各格式的模板都从这批节点出。
+	unpinPublicCACertProxies(proxies)
+	unpinPublicCACertProxies(extraProxies)
+	if len(proxies) == 0 {
+		// 一个能发的节点都没有(全部禁用 / 标签没匹配到 / 配置全部残缺):给一份带占位节点的配置,
+		// 客户端能加载、看得到原因,而不是更新失败(见 no_available_node.go)。
+		logger.Warn("[模板生成] 没有可发的节点,下发占位配置", "subscribe", subscribeFile.Name, "user", username)
+		proxies = append(proxies, noAvailableNodeProxy())
+	}
+
 	// 3. 从代理集合表获取代理集合配置（用于 proxy-providers）
 	providerConfigs, err := h.repo.ListProxyProviderConfigs(ctx, nodeOwner)
 	if err != nil {
@@ -2574,6 +2644,27 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 		result, err := injectProxiesIntoSurgeTemplate(string(templateContent), rootProxies)
 		if err != nil {
 			return nil, fmt.Errorf("生成 Surge 配置失败: %w", err)
+		}
+		return []byte(result), nil
+	}
+	if isQXTemplateFile(subscribeFile.TemplateFilename) {
+		rootProxies := make([]map[string]any, 0, len(proxies)+len(extraProxies))
+		rootProxies = append(rootProxies, proxies...)
+		rootProxies = append(rootProxies, extraProxies...)
+		result, err := injectProxiesIntoQXTemplate(string(templateContent), rootProxies)
+		if err != nil {
+			return nil, fmt.Errorf("生成 Quantumult X 配置失败: %w", err)
+		}
+		return []byte(result), nil
+	}
+	if isSingboxTemplateFile(subscribeFile.TemplateFilename) {
+		// sing-box 模板的中转组要和节点一起放进去(节点的 detour 指向它们),不能像 Clash 那样事后追加。
+		rootProxies := make([]map[string]any, 0, len(proxies)+len(extraProxies))
+		rootProxies = append(rootProxies, proxies...)
+		rootProxies = append(rootProxies, extraProxies...)
+		result, err := injectProxiesIntoSingboxTemplate(string(templateContent), rootProxies, relayGroups)
+		if err != nil {
+			return nil, fmt.Errorf("生成 sing-box 配置失败: %w", err)
 		}
 		return []byte(result), nil
 	}
@@ -2625,6 +2716,8 @@ func (h *SubscriptionHandler) generateFromSelectedTags(ctx context.Context, user
 	if err != nil {
 		return nil, fmt.Errorf("获取节点列表失败: %w", err)
 	}
+	// 探测判定不可用且开启了自动移除的节点,不进订阅(见 node_probe_removal.go)
+	nodes = filterProbeRemovedNodes(nodes)
 
 	if settings, err := h.repo.GetUserSettings(ctx, username); err == nil && len(settings.NodeOrder) > 0 {
 		sortNodesByNodeOrder(nodes, settings.NodeOrder)
@@ -2656,6 +2749,11 @@ func (h *SubscriptionHandler) generateFromSelectedTags(ctx context.Context, user
 		}
 		normalizeProxyFields(proxyConfig)
 		proxyConfig["name"] = node.NodeName
+		// 残缺节点(缺 type/server/port)不发:一个就能让 mihomo 整份订阅加载失败
+		if missing := clashProxyMissingFields(proxyConfig); len(missing) > 0 {
+			logger.Warn("[标签动态生成] 节点 clash 配置残缺,本次不下发", "node_id", node.ID, "node", node.NodeName, "missing", missing)
+			continue
+		}
 		if node.ChainProxyNodeID != nil {
 			if targetName, ok := nodeIDToName[*node.ChainProxyNodeID]; ok {
 				proxyConfig["dialer-proxy"] = targetName
@@ -2666,6 +2764,13 @@ func (h *SubscriptionHandler) generateFromSelectedTags(ctx context.Context, user
 		}
 		proxies = append(proxies, proxyConfig)
 		proxyNames = append(proxyNames, node.NodeName)
+	}
+
+	if len(proxies) == 0 {
+		// 一个能发的节点都没有:下发占位节点而不是空配置,客户端能加载、看得到原因(见 no_available_node.go)
+		logger.Warn("[标签动态生成] 没有可发的节点,下发占位配置", "subscribe", subscribeFile.Name, "tags", subscribeFile.SelectedTags)
+		proxies = append(proxies, noAvailableNodeProxy())
+		proxyNames = append(proxyNames, noAvailableNodeName)
 	}
 
 	groupProxies := append([]string{}, proxyNames...)

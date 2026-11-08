@@ -10,7 +10,7 @@ mmwx 暂未提供自有二进制发行物；本安装/更新/卸载入口已停�
 MMWX_SOURCE_ONLY
 exit 2
 
-VERSION="v0.8.6"
+VERSION="v0.10.1"
 GITHUB_REPO="iluobei/miaomiaowu"
 VERSION_FILE=".version"
 PORT_FILE=".port"
